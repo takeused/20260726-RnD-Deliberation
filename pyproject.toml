@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rdagents"
+version = "0.1.0"
+description = "R&D 신규사업 예산 심의 시뮬레이션 - Multi-Agent LLM Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain-core>=0.3.81",
+    "langchain-anthropic>=0.3.15",
+    "langchain-google-genai>=4.0.0",
+    "langchain-openai>=0.3.23",
+    "langgraph>=0.4.8",
+    "langgraph-checkpoint-sqlite>=2.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "rich>=14.0.0",
+    "typing-extensions>=4.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.15",
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["rdagents*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM"]
+ignore = ["E501"]

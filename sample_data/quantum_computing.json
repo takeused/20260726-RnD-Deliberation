@@ -1,0 +1,63 @@
+{
+  "project_id": "QC-2027-001",
+  "project_name": "차세대 양자컴퓨팅 원천기술 개발사업",
+  "department": "과학기술정보통신부",
+  "requested_budget_billion_krw": 450,
+  "duration_years": 5,
+  "start_year": 2027,
+  "trl_current": 3,
+  "trl_target": 7,
+  "strategic_technology_area": "양자 기술",
+  "national_strategy_alignment": [
+    "12대 국가전략기술 - 양자",
+    "제5차 과학기술 기본계획 - 초격차 원천기술 확보"
+  ],
+  "description": "초전도 양자비트(Transmon qubit) 기반 100큐비트급 범용 양자컴퓨터 하드웨어 및 소프트웨어 원천기술 개발 사업. 양자 오류정정 코드(QEC) 구현을 통해 실용적 양자 우위(Quantum Advantage) 달성을 목표로 합니다. 1단계(2027-2029)에서 50큐비트 프로토타입을 개발하고, 2단계(2029-2031)에서 100큐비트급 시스템으로 확장합니다.",
+  "core_technologies": [
+    "초전도 양자비트 설계 및 제조",
+    "양자 오류정정 코드(Surface Code)",
+    "극저온 제어 전자장비",
+    "양자 소프트웨어 스택 및 컴파일러"
+  ],
+  "expected_outcomes": [
+    "100큐비트급 양자컴퓨터 프로토타입 1식",
+    "양자 오류정정 기반 논리큐비트 구현",
+    "SCI급 논문 50편 이상",
+    "핵심 특허 30건 이상",
+    "양자컴퓨팅 전문인력 100명 양성"
+  ],
+  "economic_impact": "양자컴퓨팅 글로벌 시장은 2030년 약 650억 달러 규모로 성장할 전망이며, 본 사업을 통해 국내 양자 산업 생태계를 구축하고 글로벌 시장 점유율 5% 달성 목표. 약 3조원의 경제적 파급효과 기대.",
+  "performing_institution": "한국과학기술원(KAIST)",
+  "co_institutions": ["서울대학교", "한국표준과학연구원(KRISS)", "삼성전자 종합기술원"],
+  "research_team_size": 45,
+  "pi_name": "김양자 교수",
+  "pi_credentials": "MIT 양자정보학 박사, Nature Physics 논문 12편, 관련 분야 연구경력 15년",
+  "infrastructure": [
+    "KAIST 양자컴퓨팅 연구센터 (10mK 희석냉각기 보유)",
+    "KRISS 양자표준 연구시설",
+    "삼성 반도체 팹 공동활용"
+  ],
+  "similar_existing_projects": [
+    {
+      "name": "양자정보통신 핵심기술 개발",
+      "period": "2023-2027",
+      "budget_billion_krw": 200,
+      "overlap_assessment": "양자통신 중심으로 양자컴퓨팅과는 기술적 차별성 존재. 다만 양자비트 제조 기술 일부 중복 가능성."
+    },
+    {
+      "name": "양자소재 원천기술 개발",
+      "period": "2024-2028",
+      "budget_billion_krw": 150,
+      "overlap_assessment": "양자소재(초전도체) 원천기술 중심으로 하드웨어 설계와 구분되나, 초전도 소재 부분에서 연구 영역 중첩 가능."
+    }
+  ],
+  "regulatory_considerations": "특별한 규제 사항 없음. 다만, 양자암호 관련 기술은 수출통제(EAR/Wassenaar Arrangement) 대상이 될 수 있으므로 사전 검토 필요.",
+  "private_sector_investment_billion_krw": 50,
+  "commercialization_plan": "양자 클라우드 서비스 플랫폼 구축(2032년), 양자 시뮬레이션 솔루션 상용화(2030년), 양자 보안 솔루션 기술이전(2029년)",
+  "risk_factors": [
+    "양자비트 결맞음 시간(Coherence Time) 기술적 한계",
+    "글로벌 경쟁 심화 (IBM, Google, 중국 과학원 등)",
+    "극저온 장비 수입 의존도 높음",
+    "전문인력 확보 경쟁"
+  ]
+}
