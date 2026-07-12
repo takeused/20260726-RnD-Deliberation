@@ -470,8 +470,45 @@ def run_question_verification():
     print("=== 질의 적중 검증 테스트 통과 ===")
 
 
+def run_hearing_rehearsal():
+    """모의 청문: 스크립트 입력으로 답변→평가→압박 후속질의→기록 저장을 검증."""
+    import tempfile
+
+    from rdagents.agents.schemas import ReviewPreparationReport
+    from rdagents.hearing import run_hearing
+
+    run_dir = Path(tempfile.mkdtemp(prefix="rdagents_hearing_"))
+    prediction = _default_instance(ReviewPreparationReport)
+    (run_dir / "07b_예상질의.json").write_text(prediction.model_dump_json(), encoding="utf-8")
+
+    inputs = iter([
+        "정부지원이 필요한 이유는 시장실패 때문입니다.",  # 질의1 답변
+        "",                                              # 질의1 후속 답변 생략
+        "q",                                             # 질의2에서 종료
+    ])
+    printed = []
+    out_path = run_hearing(
+        FakeLLM(), run_dir,
+        input_fn=lambda _prompt: next(inputs),
+        print_fn=printed.append,
+    )
+
+    assert out_path.exists()
+    transcript = out_path.read_text(encoding="utf-8")
+    assert "평가 점수" in transcript, "평가가 기록되지 않음"
+    assert "압박 후속질의" in transcript
+    assert "(사용자 종료)" in transcript
+    assert any("위원:" in line for line in printed), "질의가 출력되지 않음"
+    print("=== 모의 청문 테스트 통과 ===")
+
+
 def test_question_verification():
     run_question_verification()
+    run_hearing_rehearsal()
+
+
+def test_hearing_rehearsal():
+    run_hearing_rehearsal()
 
 
 def test_full_pipeline_smoke():
@@ -501,3 +538,4 @@ if __name__ == "__main__":
     run_parallel_context_isolation()
     run_checkpoint_resume()
     run_question_verification()
+    run_hearing_rehearsal()

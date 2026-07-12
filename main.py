@@ -49,7 +49,12 @@ def main():
         "--run-dir",
         type=str,
         default=None,
-        help="대조 대상 심의 실행 결과 디렉터리 (--verify-questions와 함께 사용).",
+        help="심의 실행 결과 디렉터리 (--verify-questions 또는 --hearing과 함께 사용).",
+    )
+    parser.add_argument(
+        "--hearing",
+        action="store_true",
+        help="모의 청문 모드: --run-dir의 예상 질의로 대화형 답변 리허설을 진행합니다.",
     )
     parser.add_argument(
         "--evidence",
@@ -91,6 +96,23 @@ def main():
         print(f"오류: {auth_error}", file=sys.stderr)
         print(".env 파일을 확인해 주세요.", file=sys.stderr)
         return 2
+
+    # 모의 청문 모드: 예상 질의로 대화형 리허설
+    if args.hearing:
+        if not args.run_dir:
+            print("오류: --hearing에는 --run-dir이 필요합니다.", file=sys.stderr)
+            return 2
+        from rdagents.hearing import run_hearing
+
+        graph = RDReviewGraph(debug=args.debug)
+        try:
+            run_hearing(graph.deep_llm, args.run_dir)
+        except Exception as e:
+            print(f"\n[청문 실패]: {e}", file=sys.stderr)
+            return 1
+        finally:
+            graph.close()
+        return 0
 
     # 사후 검증 모드: 시뮬레이션 없이 실제 질의 대조만 수행
     if args.verify_questions:
