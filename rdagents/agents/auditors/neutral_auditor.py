@@ -2,7 +2,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 
 
 def create_neutral_auditor(llm):
@@ -27,7 +27,7 @@ def create_neutral_auditor(llm):
         ])
 
         budget_plan = state.get("budget_coordination_plan", "예산안 없음")
-        audit_history = state["audit_debate_state"]["history"] or "이전 발언이 없습니다."
+        audit_history = clip_text(state["audit_debate_state"]["history"], state) or "이전 발언이 없습니다."
 
         prompt_val = prompt.invoke({"budget_plan": budget_plan, "audit_history": audit_history})
         response = llm.invoke(prompt_val)

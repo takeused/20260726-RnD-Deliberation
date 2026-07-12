@@ -11,6 +11,30 @@ from rdagents.llm_clients.api_key_env import get_api_key_env
 
 _KEY_OPTIONAL_PROVIDERS = {"bedrock", "ollama", "openai_compatible"}
 
+# 실행 프로파일: 테스트는 저비용(Cerebras/로컬), 실전은 Gemini
+PROFILES = {
+    "test-cerebras": {
+        "llm_provider": "cerebras",
+        "deep_think_llm": "zai-glm-4.7",
+        "quick_think_llm": "gpt-oss-120b",
+        # 무료 티어 컨텍스트 8K 토큰 제한 대응
+        "prompt_char_budget": 1200,
+        "report_chunk_chars": 1500,
+        "report_retrieval_top_k": 2,
+    },
+    "test-local": {
+        "llm_provider": "ollama",
+        "deep_think_llm": "gemma4:e4b",
+        "quick_think_llm": "gemma4:e4b",
+        "prompt_char_budget": 6000,
+    },
+    "prod": {
+        "llm_provider": "google",
+        "deep_think_llm": "gemini-3.1-flash",
+        "quick_think_llm": "gemini-3.1-flash",
+    },
+}
+
 
 def _validate_provider_auth(provider: str) -> str | None:
     """선택한 프로바이더에 필요한 인증 환경변수의 오류 메시지를 반환한다."""
@@ -57,6 +81,13 @@ def main():
         help="모의 청문 모드: --run-dir의 예상 질의로 대화형 답변 리허설을 진행합니다.",
     )
     parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILES),
+        default=None,
+        help="실행 프로파일: test-cerebras(Cerebras API), test-local(Ollama gemma4:e4b), "
+             "prod(Gemini 3.1 Flash). 미지정 시 .env/기본 설정 사용.",
+    )
+    parser.add_argument(
         "--gate",
         choices=["부처심의", "예타", "예산조정", "국회"],
         default=None,
@@ -96,7 +127,16 @@ def main():
     # 환경변수 강제 로드
     load_dotenv(override=True)
 
-    provider = os.getenv("RDAGENTS_LLM_PROVIDER", "google")
+    # 프로파일·관문 오버라이드 (모든 실행 모드에 공통 적용)
+    overrides = dict(PROFILES[args.profile]) if args.profile else {}
+    if args.gate:
+        overrides["review_gate"] = args.gate
+    overrides = overrides or None
+
+    provider = (
+        overrides["llm_provider"] if overrides and "llm_provider" in overrides
+        else os.getenv("RDAGENTS_LLM_PROVIDER", "google")
+    )
     auth_error = _validate_provider_auth(provider)
     if auth_error:
         print(f"오류: {auth_error}", file=sys.stderr)
@@ -110,7 +150,7 @@ def main():
             return 2
         from rdagents.hearing import run_hearing
 
-        graph = RDReviewGraph(debug=args.debug)
+        graph = RDReviewGraph(config=overrides, debug=args.debug)
         try:
             run_hearing(graph.deep_llm, args.run_dir)
         except Exception as e:
@@ -127,7 +167,7 @@ def main():
             return 2
         from rdagents.dataflows.question_verification import verify_questions
 
-        graph = RDReviewGraph(debug=args.debug)
+        graph = RDReviewGraph(config=overrides, debug=args.debug)
         try:
             with open(args.verify_questions, encoding="utf-8") as f:
                 actual_text = f.read()
@@ -153,8 +193,7 @@ def main():
     print(f"[{args.year}년도 R&D 신규사업 예산 심의 시뮬레이션 시작: {target}]\n")
     print("그래프 초기화 중...")
 
-    # 워크플로우 인스턴스화 (관문 지정 시 config 덮어쓰기)
-    overrides = {"review_gate": args.gate} if args.gate else None
+    # 워크플로우 인스턴스화 (프로파일·관문 오버라이드 적용)
     graph = RDReviewGraph(config=overrides, debug=args.debug)
 
     # 실행

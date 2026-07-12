@@ -34,6 +34,7 @@ PROVIDER_API_KEY_ENV: dict[str, str | None] = {
     "mistral":    "MISTRAL_API_KEY",
     "kimi":       "MOONSHOT_API_KEY",
     "groq":       "GROQ_API_KEY",
+    "cerebras":   "CEREBRAS_API_KEY",
     "nvidia":     "NVIDIA_API_KEY",
     # Local runtimes do not authenticate.
     "ollama":     None,

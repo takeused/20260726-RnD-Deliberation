@@ -20,6 +20,7 @@ class Propagator:
         source_manifest: str = "",
         gate_profile: str = "",
         question_bank: str = "",
+        prompt_char_budget: int = 0,
         execution_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """그래프 초기 상태 생성."""
@@ -32,6 +33,7 @@ class Propagator:
             "source_manifest": source_manifest,
             "gate_profile": gate_profile,
             "question_bank": question_bank,
+            "prompt_char_budget": prompt_char_budget,
             "rereview_comparison_md": "",
             "execution_metrics": [],
             "execution_metadata": execution_metadata or {},

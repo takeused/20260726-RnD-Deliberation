@@ -12,6 +12,7 @@ _ENV_OVERRIDES = {
     "RDAGENTS_MAX_AUDIT_ROUNDS":     "max_audit_rounds",
     "RDAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "RDAGENTS_REVIEW_GATE":         "review_gate",
+    "RDAGENTS_PROMPT_CHAR_BUDGET":  "prompt_char_budget",
     "RDAGENTS_MAX_MEMORY_ENTRIES":  "max_memory_entries",
     "RDAGENTS_MAX_MEMORY_CHARS":    "max_memory_chars",
     "RDAGENTS_MAX_REPORT_BYTES":   "max_report_bytes",
@@ -109,6 +110,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "report_retrieval_top_k": 4,
     # 심의 관문 (부처심의 / 예타 / 예산조정 / 국회)
     "review_gate": "부처심의",
+    # 노드별 긴 입력 절단 예산 (문자 수, 0 = 무제한). 소형 컨텍스트 백엔드용
+    "prompt_char_budget": 0,
     # 출력 언어
     "output_language": "Korean",
     # 토론 및 심의 설정

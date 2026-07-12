@@ -5,7 +5,7 @@ import json
 from langchain_core.prompts import ChatPromptTemplate
 
 from rdagents.agents.schemas import ReviewPlan, render_review_plan
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.agents.utils.structured import invoke_structured_model
 
@@ -39,8 +39,8 @@ def create_review_manager(llm):
             debate_history = "토론 내역이 없습니다."
 
         prompt_val = prompt.invoke({
-            "debate_history": debate_history,
-            "past_context": state.get("past_context") or "이전 심의 이력 없음 (신규 심의).",
+            "debate_history": clip_text(debate_history, state),
+            "past_context": clip_text(state.get("past_context") or "", state) or "이전 심의 이력 없음 (신규 심의).",
         })
         call = invoke_structured_model(llm, ReviewPlan, prompt_val, "Review Manager")
         plan = call.model

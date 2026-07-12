@@ -8,7 +8,7 @@ from rdagents.agents.schemas import (
     render_quality_scorecard,
     render_uncertainty_report,
 )
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
 
 
@@ -38,10 +38,10 @@ def create_quality_assessor(llm):
         reports = "\n\n".join(state.get(key, "") for key in _REPORT_KEYS if state.get(key))
         prompt_val = prompt.invoke({
             "sources": state.get("source_manifest") or "출처 정보 없음",
-            "reports": reports or "전문 분석 없음",
-            "debate": state["review_debate_state"]["history"] or "토론 없음",
+            "reports": clip_text(reports, state, fraction=0.5) or "전문 분석 없음",
+            "debate": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 없음",
             "review_plan": state.get("review_plan") or "의견 없음",
-            "audit": state["audit_debate_state"]["history"] or "재정 검토 없음",
+            "audit": clip_text(state["audit_debate_state"]["history"], state, fraction=0.5) or "재정 검토 없음",
             "decision": state.get("final_review_decision") or "최종 결정 없음",
         })
         call = invoke_structured_model(llm, DecisionQualityReport, prompt_val, "Quality Assessor")

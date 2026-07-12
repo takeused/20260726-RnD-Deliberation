@@ -13,7 +13,7 @@ from rdagents.agents.schemas import (
     render_anticipated_questions,
     render_improvements,
 )
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.agents.utils.structured import invoke_structured_model
 
@@ -61,12 +61,15 @@ def create_question_extractor(llm):
             if state.get(key):
                 reports.append(f"--- {name} ---\n{state[key]}")
 
+        def _clip_half(text, state):
+            return clip_text(text, state, fraction=0.5)
+
         prompt_val = prompt.invoke({
-            "question_bank": state.get("question_bank") or "참고 자료 없음",
-            "reports": "\n\n".join(reports) or "분석 보고서 없음",
-            "debate_history": state["review_debate_state"]["history"] or "토론 내역 없음",
+            "question_bank": clip_text(state.get("question_bank") or "", state, fraction=0.5) or "참고 자료 없음",
+            "reports": _clip_half("\n\n".join(reports), state) or "분석 보고서 없음",
+            "debate_history": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
             "review_plan": state.get("review_plan", "의견 없음"),
-            "audit_history": state["audit_debate_state"]["history"] or "토론 내역 없음",
+            "audit_history": clip_text(state["audit_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
             "final_decision": state.get("final_review_decision", "결정 없음"),
         })
 

@@ -3,7 +3,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 from rdagents.agents.schemas import FinalDecision, render_final_decision
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
 
 
@@ -54,11 +54,11 @@ def create_final_approver(llm):
             audit_history = "토론 내역이 없습니다."
 
         prompt_val = prompt.invoke({
-            "analyst_reports": "\n\n".join(reports) or "전문 분석 보고서 없음",
+            "analyst_reports": clip_text("\n\n".join(reports), state) or "전문 분석 보고서 없음",
             "review_plan": state.get("review_plan") or "전문위원회 의견 없음",
             "budget_plan": budget_plan,
-            "audit_history": audit_history,
-            "past_context": state.get("past_context") or "이전 심의 이력 없음 (신규 심의).",
+            "audit_history": clip_text(audit_history, state),
+            "past_context": clip_text(state.get("past_context") or "", state) or "이전 심의 이력 없음 (신규 심의).",
         })
         call = invoke_structured_model(llm, FinalDecision, prompt_val, "Final Approver")
         decision = call.model

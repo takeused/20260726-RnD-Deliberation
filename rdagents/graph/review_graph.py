@@ -138,6 +138,7 @@ class RDReviewGraph:
             question_bank=load_question_bank(
                 [self.config["question_bank_seed_dir"], self.config["question_bank_dir"]]
             ),
+            prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
             execution_metadata={
                 "execution_id": execution_id,
                 "provider": self.config["llm_provider"],

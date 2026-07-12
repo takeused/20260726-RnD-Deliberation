@@ -3,7 +3,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 from rdagents.agents.schemas import ReReviewComparison, render_rereview_comparison
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
 
 
@@ -23,10 +23,10 @@ def create_rereview_comparator(llm):
                           "해소·미해소·신규 우려를 근거 중심으로 비교하세요."),
             ])
             prompt_val = prompt.invoke({
-                "past": past,
+                "past": clip_text(past, state),
                 "plan": state.get("review_plan") or "없음",
                 "decision": state.get("final_review_decision") or "없음",
-                "improvements": state.get("improvement_recommendations_md") or "없음",
+                "improvements": clip_text(state.get("improvement_recommendations_md") or "", state) or "없음",
             })
             call = invoke_structured_model(
                 llm, ReReviewComparison, prompt_val, "Re-review Comparator"

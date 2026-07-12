@@ -4,7 +4,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 
 _REPORT_SECTIONS = [
@@ -48,10 +48,10 @@ def create_panel_examiner(llm):
                 reports.append(f"--- {name} ---\n{state[key]}")
 
         prompt_val = prompt.invoke({
-            "reports": "\n\n".join(reports) or "분석 보고서 없음",
-            "defender_history": state["review_debate_state"]["defender_history"]
+            "reports": clip_text("\n\n".join(reports), state) or "분석 보고서 없음",
+            "defender_history": clip_text(state["review_debate_state"]["defender_history"], state)
                 or "아직 발표자 발언이 없습니다. 보고서 자체의 허점을 공격하세요.",
-            "examiner_history": state["review_debate_state"]["examiner_history"]
+            "examiner_history": clip_text(state["review_debate_state"]["examiner_history"], state)
                 or "첫 라운드입니다.",
         })
 

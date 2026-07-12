@@ -71,6 +71,7 @@ class ReviewAgentState(MessagesState):
     source_manifest: Annotated[str, "입력 문서 출처 및 검색 인덱스 메타데이터"]
     gate_profile: Annotated[str, "심의 관문 프로파일 (청중·중점 기준·질의 성향)"]
     question_bank: Annotated[str, "기출·전형 질의 참고 코퍼스"]
+    prompt_char_budget: Annotated[int, "노드 입력 절단 예산 (문자 수, 0=무제한)"]
     rereview_comparison_md: Annotated[str, "재심의 전후 비교 보고서"]
     execution_metrics: Annotated[list[dict], "노드별 실행시간·토큰 관측값"]
     execution_metadata: Annotated[dict, "실행 ID·모델·체크포인트 메타데이터"]
