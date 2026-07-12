@@ -62,7 +62,7 @@
 
 ## 다음 작업 (백로그, 우선순위 순)
 
-- [ ] **실제 LLM 실행 1회 (최우선)** — `.env`에 GOOGLE_API_KEY 설정 후
+- [x] **실제 LLM 실행 1회** — Cerebras(test-cerebras)로 전체 심의 완주 (조건부승인 337.5억, 토큰 109,973). prod(Gemini)는 GOOGLE_API_KEY 설정 후 동일 명령에 --profile prod
       `python main.py --project quantum_computing --debug`.
       확인 포인트: ① 구조화 재시도가 실전에서 작동하는지 ② 12_실행관측성.md 토큰이 0이 아닌지
       ③ 07_예상질의응답.md 질의 품질(3대 기준 커버리지)

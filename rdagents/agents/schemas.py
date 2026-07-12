@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _coerce_str(value):
+    """소형 모델이 문자열 필드에 리스트를 반환하는 흔한 오류를 자동 교정."""
+    if isinstance(value, list):
+        return "\n".join(f"- {item}" for item in value)
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +52,11 @@ class ReviewPlan(BaseModel):
     key_concerns: str = Field(
         description="향후 해결이 필요한 핵심 우려사항 또는 조건.",
     )
+
+    @field_validator("key_concerns", "rationale", mode="before")
+    @classmethod
+    def coerce_text_fields(cls, value):
+        return _coerce_str(value)
 
 
 def render_review_plan(plan: ReviewPlan) -> str:
@@ -92,6 +104,11 @@ class BudgetProposal(BaseModel):
         default=None,
         description="조건부 통과 시 이행 조건.",
     )
+
+    @field_validator("conditions", "reasoning", mode="before")
+    @classmethod
+    def coerce_text_fields(cls, value):
+        return _coerce_str(value)
 
     @model_validator(mode="after")
     def validate_budget_action(self):
@@ -158,6 +175,11 @@ class FinalDecision(BaseModel):
         default=None,
         description="조건부 승인 시 이행 조건 목록.",
     )
+
+    @field_validator("conditions", "executive_summary", "review_rationale", mode="before")
+    @classmethod
+    def coerce_text_fields(cls, value):
+        return _coerce_str(value)
 
     @model_validator(mode="after")
     def validate_decision_consistency(self):

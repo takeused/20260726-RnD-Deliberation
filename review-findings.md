@@ -173,3 +173,20 @@
   (~/.rdagents/question_bank/) → 회차가 쌓일수록 예측이 실전 기출에 그라운딩됨
 - ✅ 전체 pytest 11종 통과. 라벨·산출물 파일명(02_심사공방_전문.md) 및 문서 갱신
 - 잔여: 실제 LLM 실행(API 키), 경쟁 사업 비교 심의 모드, 시기·정책 맥락 입력(검토 의견의 4·5번)
+
+### 8단계 적용 기록 (LLM 백엔드 3중 프로파일 + 실전 첫 완주)
+
+- ✅ `--profile test-cerebras|test-local|prod` 도입 — 테스트는 Cerebras API(zai-glm-4.7 + gpt-oss-120b)와
+  로컬 Ollama(gemma4:e4b), 실전은 Gemini 3.1 Flash
+- ✅ Cerebras 프로바이더를 OpenAI 호환 레지스트리에 등록 (base_url, CEREBRAS_API_KEY, 모델명 자유 허용)
+- ✅ 프롬프트 분량 예산(`prompt_char_budget`, clip_text): Cerebras 무료 티어 8K 토큰·소형 로컬 모델의
+  컨텍스트 초과 중단을 방지. 입력 6구간인 질의추출기·품질평가는 구간당 예산 절반 적용
+- ✅ **실제 LLM 전체 심의 첫 완주** (Cerebras, 6분석가+공방 2R+3자 검토): 조건부승인 337.5억(25% 감액),
+  19개 산출물 생성, 실측 토큰 109,973 — usage 보존 수정이 실전에서 검증됨
+- ⚠️ 확인된 한계: zai-glm-4.7이 예상질의·품질평가의 대형 스키마 tool call 생성에 실패
+  → 자유 텍스트 폴백으로 완주 (폴백 산출물도 표 형식으로 사용 가능 수준).
+  실전(prod, Gemini)에서는 구조화 성공 예상. 후속 개선 후보: json_mode 방식 구조화
+- ✅ test-local(gemma4:e4b) 축소 완주 확인 (48분): 소형 모델의 구조화 실패는 전부 폴백으로 흡수,
+  폴백 결정의 메모리 기록 제외 가드 정상 작동. 로컬 프로파일은 배선 검증용으로 규정
+- ✅ 소형 모델이 문자열 필드에 리스트를 반환하는 패턴(FinalDecision.conditions 등)을
+  field_validator로 자동 교정 — 로컬 실행에서 발견된 실패 사례를 즉시 반영
