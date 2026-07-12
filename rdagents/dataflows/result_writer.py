@@ -68,6 +68,7 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         ),
     )
     write("07_예상질의응답.md", final_state.get("anticipated_questions_md", ""))
+    write("07b_예상질의.json", final_state.get("preparation_report_json", ""))
     write("08_보완권고.md", final_state.get("improvement_recommendations_md", ""))
     write("09_정량평가표.md", final_state.get("quality_scorecard_md", ""))
     write("10_불확실성_반대근거.md", final_state.get("uncertainty_report_md", ""))

@@ -40,6 +40,18 @@ def main():
         help="원문 보고서의 안정적인 사업 ID. 미지정 시 파일 경로 기반 ID를 생성합니다.",
     )
     parser.add_argument(
+        "--verify-questions",
+        type=str,
+        default=None,
+        help="실제 심의에서 받은 질의 파일(.md/.txt). --run-dir의 예측과 대조해 적중률을 기록합니다.",
+    )
+    parser.add_argument(
+        "--run-dir",
+        type=str,
+        default=None,
+        help="대조 대상 심의 실행 결과 디렉터리 (--verify-questions와 함께 사용).",
+    )
+    parser.add_argument(
         "--evidence",
         action="append",
         default=[],
@@ -79,6 +91,34 @@ def main():
         print(f"오류: {auth_error}", file=sys.stderr)
         print(".env 파일을 확인해 주세요.", file=sys.stderr)
         return 2
+
+    # 사후 검증 모드: 시뮬레이션 없이 실제 질의 대조만 수행
+    if args.verify_questions:
+        if not args.run_dir:
+            print("오류: --verify-questions에는 --run-dir이 필요합니다.", file=sys.stderr)
+            return 2
+        from rdagents.dataflows.question_verification import verify_questions
+
+        graph = RDReviewGraph(debug=args.debug)
+        try:
+            with open(args.verify_questions, encoding="utf-8") as f:
+                actual_text = f.read()
+            _, stats = verify_questions(
+                graph.deep_llm, args.run_dir, actual_text,
+                graph.config["verification_history_path"],
+            )
+        except Exception as e:
+            print(f"[검증 실패]: {e}", file=sys.stderr)
+            return 1
+        finally:
+            graph.close()
+        print("=" * 60)
+        print(f"질의 적중 검증 완료: 실제 {stats['total']}건 중 "
+              f"적중 {stats['hits']} / 부분 {stats['partials']} / 미적중 {stats['misses']}")
+        print(f"가중 적중률: {stats['weighted_hit_rate']}%")
+        print(f"상세 보고서: {args.run_dir} 의 13_질의적중검증.md")
+        print(f"누적 이력: {graph.config['verification_history_path']}")
+        return 0
 
     target = args.report if args.report else args.project
     print(f"[{args.year}년도 R&D 신규사업 예산 심의 시뮬레이션 시작: {target}]\n")

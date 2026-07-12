@@ -61,6 +61,7 @@ class ReviewAgentState(MessagesState):
 
     # 심의 대비 산출물 (예상 질의 추출기)
     anticipated_questions_md: Annotated[str, "예상 질의응답 마크다운"]
+    preparation_report_json: Annotated[str, "예상 질의·보완 권고 구조화 JSON (사후 검증용)"]
     improvement_recommendations_md: Annotated[str, "기획보고서 보완 권고 마크다운"]
     quality_scorecard_md: Annotated[str, "기준별 정량 평가표 마크다운"]
     uncertainty_report_md: Annotated[str, "불확실성·반대 근거 보고서 마크다운"]

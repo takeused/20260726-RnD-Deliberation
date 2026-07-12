@@ -294,6 +294,82 @@ def render_final_decision(decision: FinalDecision) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 사후 검증: 실제 질의 vs 예측 질의 대조
+# ---------------------------------------------------------------------------
+
+class MatchLevel(str, Enum):
+    """실제 질의와 예측 질의의 일치 수준."""
+    HIT = "적중"
+    PARTIAL = "부분적중"
+    MISS = "미적중"
+
+
+class QuestionMatch(BaseModel):
+    """실제 심의에서 받은 질의 1건에 대한 예측 대조 결과."""
+
+    actual_question: str = Field(description="실제 심의에서 받은 질의 원문.")
+    match_level: MatchLevel = Field(
+        description="적중(같은 논점·근거를 예측) / 부분적중(논점은 겹치나 핵심 각도가 다름) / 미적중.",
+    )
+    matched_prediction: str | None = Field(
+        default=None,
+        description="대응하는 예측 질의 원문. 미적중이면 None.",
+    )
+    note: str = Field(description="판정 근거 한두 문장.")
+
+
+class QuestionVerificationReport(BaseModel):
+    """실제 질의 목록 전체에 대한 예측 대조 보고서. 적중률 수치는 코드에서 계산한다."""
+
+    matches: list[QuestionMatch] = Field(
+        min_length=1,
+        description="실제 질의 1건당 1개 항목. 실제 질의를 빠짐없이 포함.",
+    )
+    missed_topics_summary: str = Field(
+        description="미적중 질의들의 공통 주제 요약 — 다음 시뮬레이션이 보강해야 할 방향.",
+    )
+
+
+def compute_hit_stats(report: QuestionVerificationReport) -> dict:
+    """적중률 통계를 코드에서 계산 (LLM 산출 숫자를 신뢰하지 않음)."""
+    total = len(report.matches)
+    hits = sum(1 for m in report.matches if m.match_level == MatchLevel.HIT)
+    partials = sum(1 for m in report.matches if m.match_level == MatchLevel.PARTIAL)
+    misses = total - hits - partials
+    weighted = round((hits + 0.5 * partials) / total * 100, 1) if total else 0.0
+    return {
+        "total": total, "hits": hits, "partials": partials, "misses": misses,
+        "weighted_hit_rate": weighted,
+    }
+
+
+def render_verification_report(report: QuestionVerificationReport, stats: dict) -> str:
+    lines = [
+        "# 예상 질의 적중 검증",
+        "",
+        f"- **실제 질의 수**: {stats['total']}",
+        f"- **적중**: {stats['hits']} / **부분적중**: {stats['partials']} / **미적중**: {stats['misses']}",
+        f"- **가중 적중률**: {stats['weighted_hit_rate']}% (적중 1.0 + 부분 0.5)",
+        "",
+        "| # | 실제 질의 | 판정 | 대응 예측 질의 | 근거 |",
+        "|---|---|---|---|---|",
+    ]
+    for i, m in enumerate(report.matches, 1):
+        pred = (m.matched_prediction or "—").replace("|", "/")
+        lines.append(
+            f"| {i} | {m.actual_question.replace('|', '/')} | {m.match_level.value} "
+            f"| {pred} | {m.note.replace('|', '/')} |"
+        )
+    lines.extend([
+        "",
+        "## 미적중 주제 요약 (다음 시뮬레이션 보강 방향)",
+        "",
+        report.missed_topics_summary,
+    ])
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # 심의 품질·불확실성 평가
 # ---------------------------------------------------------------------------
 

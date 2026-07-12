@@ -40,6 +40,16 @@ def _default_instance(schema):
         values["proposed_budget_billion"] = values["original_budget_billion"]
     elif schema.__name__ == "FinalDecision":
         values["approved_budget_billion"] = 100.0
+    elif schema.__name__ == "QuestionVerificationReport":
+        from rdagents.agents.schemas import MatchLevel, QuestionMatch
+
+        values["matches"] = [
+            QuestionMatch(actual_question="[실제 질의1]", match_level=MatchLevel.HIT,
+                          matched_prediction="[예측 질의1]", note="논점 일치"),
+            QuestionMatch(actual_question="[실제 질의2]", match_level=MatchLevel.MISS,
+                          matched_prediction=None, note="예측에 없음"),
+        ]
+        values["missed_topics_summary"] = "[가짜 미적중 요약]"
     elif schema.__name__ == "ReviewPreparationReport":
         from rdagents.agents.schemas import (
             AnticipatedQuestion, CriterionTag, ImprovementItem, Severity,
@@ -428,6 +438,42 @@ def run_checkpoint_resume():
     print("=== 체크포인트 재개 테스트 통과 ===")
 
 
+def run_question_verification():
+    """실제 질의 대조: 13_질의적중검증.md 생성과 적중률 이력 누적을 검증."""
+    import tempfile
+
+    from rdagents.agents.schemas import ReviewPreparationReport
+    from rdagents.dataflows.question_verification import verify_questions
+
+    tmp = Path(tempfile.mkdtemp(prefix="rdagents_verify_"))
+    run_dir = tmp / "run"
+    run_dir.mkdir()
+    prediction = _default_instance(ReviewPreparationReport)
+    (run_dir / "07b_예상질의.json").write_text(prediction.model_dump_json(), encoding="utf-8")
+
+    history = tmp / "history.jsonl"
+    fake = FakeLLM()
+    md, stats = verify_questions(
+        fake, run_dir, "1. 실제 질의1\n2. 실제 질의2", str(history)
+    )
+
+    assert stats == {"total": 2, "hits": 1, "partials": 0, "misses": 1,
+                     "weighted_hit_rate": 50.0}, stats
+    assert (run_dir / "13_질의적중검증.md").exists()
+    assert "가중 적중률" in md
+    lines = history.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1 and json.loads(lines[0])["weighted_hit_rate"] == 50.0
+
+    # 2회차 검증 시 이력이 누적되는지 확인
+    verify_questions(fake, run_dir, "1. 실제 질의1\n2. 실제 질의2", str(history))
+    assert len(history.read_text(encoding="utf-8").strip().splitlines()) == 2
+    print("=== 질의 적중 검증 테스트 통과 ===")
+
+
+def test_question_verification():
+    run_question_verification()
+
+
 def test_full_pipeline_smoke():
     run_smoke()
 
@@ -454,3 +500,4 @@ if __name__ == "__main__":
     run_checkpoint_and_observability()
     run_parallel_context_isolation()
     run_checkpoint_resume()
+    run_question_verification()

@@ -75,16 +75,19 @@ def create_question_extractor(llm):
         if report is not None:
             questions_md = render_anticipated_questions(report)
             improvements_md = render_improvements(report)
+            report_json = report.model_dump_json()
         else:
             # 구조화 출력 실패 시 자유 텍스트로 폴백 (산출물이 비는 것 방지)
             free_text = llm.invoke(prompt_val).content
             questions_md = f"# 예상 질의응답 (자유 형식 폴백)\n\n{free_text}"
             improvements_md = "# 기획보고서 보완 권고\n\n예상 질의응답 문서를 참조하세요."
+            report_json = ""
 
         return {
             "messages": [make_ai_message(questions_md, "QuestionExtractor", call.usage)],
             "anticipated_questions_md": questions_md,
             "improvement_recommendations_md": improvements_md,
+            "preparation_report_json": report_json,
         }
 
     return question_extractor_node

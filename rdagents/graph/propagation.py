@@ -65,6 +65,7 @@ class Propagator:
             "budget_coordination_plan": "",
             "final_review_decision": "",
             "anticipated_questions_md": "",
+            "preparation_report_json": "",
             "improvement_recommendations_md": "",
             "quality_scorecard_md": "",
             "uncertainty_report_md": "",

@@ -71,6 +71,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "RDAGENTS_MEMORY_LOG_PATH",
         os.path.join(_RDAGENTS_HOME, "memory", "review_memory.md"),
     ),
+    "verification_history_path": os.getenv(
+        "RDAGENTS_VERIFICATION_HISTORY",
+        os.path.join(_RDAGENTS_HOME, "verification", "history.jsonl"),
+    ),
     "checkpoint_path": os.getenv(
         "RDAGENTS_CHECKPOINT_PATH",
         os.path.join(_RDAGENTS_HOME, "checkpoints", "reviews.sqlite"),
