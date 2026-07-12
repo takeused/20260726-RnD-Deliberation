@@ -57,6 +57,12 @@ def main():
         help="모의 청문 모드: --run-dir의 예상 질의로 대화형 답변 리허설을 진행합니다.",
     )
     parser.add_argument(
+        "--gate",
+        choices=["부처심의", "예타", "예산조정", "국회"],
+        default=None,
+        help="대비할 심의 관문. 관문별로 심사위원 성향과 질의 각도가 달라집니다. (기본: 부처심의)",
+    )
+    parser.add_argument(
         "--evidence",
         action="append",
         default=[],
@@ -128,6 +134,7 @@ def main():
             _, stats = verify_questions(
                 graph.deep_llm, args.run_dir, actual_text,
                 graph.config["verification_history_path"],
+                question_bank_dir=graph.config["question_bank_dir"],
             )
         except Exception as e:
             print(f"[검증 실패]: {e}", file=sys.stderr)
@@ -146,8 +153,9 @@ def main():
     print(f"[{args.year}년도 R&D 신규사업 예산 심의 시뮬레이션 시작: {target}]\n")
     print("그래프 초기화 중...")
 
-    # 워크플로우 인스턴스화
-    graph = RDReviewGraph(debug=args.debug)
+    # 워크플로우 인스턴스화 (관문 지정 시 config 덮어쓰기)
+    overrides = {"review_gate": args.gate} if args.gate else None
+    graph = RDReviewGraph(config=overrides, debug=args.debug)
 
     # 실행
     print("심의 파이프라인 실행 중 (잠시만 기다려 주세요)...\n")

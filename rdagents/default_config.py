@@ -11,6 +11,7 @@ _ENV_OVERRIDES = {
     "RDAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "RDAGENTS_MAX_AUDIT_ROUNDS":     "max_audit_rounds",
     "RDAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
+    "RDAGENTS_REVIEW_GATE":         "review_gate",
     "RDAGENTS_MAX_MEMORY_ENTRIES":  "max_memory_entries",
     "RDAGENTS_MAX_MEMORY_CHARS":    "max_memory_chars",
     "RDAGENTS_MAX_REPORT_BYTES":   "max_report_bytes",
@@ -79,6 +80,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "RDAGENTS_CHECKPOINT_PATH",
         os.path.join(_RDAGENTS_HOME, "checkpoints", "reviews.sqlite"),
     ),
+    "question_bank_dir": os.getenv(
+        "RDAGENTS_QUESTION_BANK_DIR",
+        os.path.join(_RDAGENTS_HOME, "question_bank"),
+    ),
+    "question_bank_seed_dir": os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "question_bank_seed"),
+    ),
     "sample_data_dir": os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "sample_data"),
     ),
@@ -99,6 +107,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "max_report_bytes": 5_000_000,
     "report_chunk_chars": 4000,
     "report_retrieval_top_k": 4,
+    # 심의 관문 (부처심의 / 예타 / 예산조정 / 국회)
+    "review_gate": "부처심의",
     # 출력 언어
     "output_language": "Korean",
     # 토론 및 심의 설정

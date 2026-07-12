@@ -265,6 +265,11 @@ def run_smoke():
     # 6. 예상 질의 추출기 산출물 생성
     assert final_state.get("anticipated_questions_md"), "예상 질의응답 비어 있음"
     assert final_state.get("improvement_recommendations_md"), "보완 권고 비어 있음"
+    assert final_state.get("preparation_report_json"), "예상 질의 JSON 비어 있음"
+
+    # 6b. 관문 프로파일·질의 은행이 상태에 주입되는지 확인
+    assert "심의 관문: 부처 내 심의" in final_state.get("gate_profile", ""), "기본 관문 프로파일 누락"
+    assert "전형 질의 패턴" in final_state.get("question_bank", ""), "질의 은행 시드 미로드"
 
     # 7. 결과 파일 저장 확인
     saved_dir = Path(final_state["saved_results_dir"])
@@ -452,9 +457,11 @@ def run_question_verification():
     (run_dir / "07b_예상질의.json").write_text(prediction.model_dump_json(), encoding="utf-8")
 
     history = tmp / "history.jsonl"
+    bank_dir = tmp / "bank"
     fake = FakeLLM()
     md, stats = verify_questions(
-        fake, run_dir, "1. 실제 질의1\n2. 실제 질의2", str(history)
+        fake, run_dir, "1. 실제 질의1\n2. 실제 질의2", str(history),
+        question_bank_dir=str(bank_dir),
     )
 
     assert stats == {"total": 2, "hits": 1, "partials": 0, "misses": 1,
@@ -463,6 +470,11 @@ def run_question_verification():
     assert "가중 적중률" in md
     lines = history.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1 and json.loads(lines[0])["weighted_hit_rate"] == 50.0
+
+    # 검증된 실제 질의가 질의 은행에 축적되는지 확인
+    bank_files = list(bank_dir.glob("실제질의_*.md"))
+    assert len(bank_files) == 1, "실제 질의가 은행에 축적되지 않음"
+    assert "실제 질의1" in bank_files[0].read_text(encoding="utf-8")
 
     # 2회차 검증 시 이력이 누적되는지 확인
     verify_questions(fake, run_dir, "1. 실제 질의1\n2. 실제 질의2", str(history))

@@ -10,7 +10,9 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from rdagents.default_config import DEFAULT_CONFIG
+from rdagents.agents.utils.gate_profiles import get_gate_profile
 from rdagents.dataflows.memory_log import append_memory, load_past_context
+from rdagents.dataflows.question_bank import load_question_bank
 from rdagents.dataflows.project_loader import (
     get_source_manifest,
     set_current_project,
@@ -132,6 +134,10 @@ class RDReviewGraph:
             project_context=f"프로젝트 ID: {project_id} ({review_year}년도 예산 심의)",
             past_context=past_context,
             source_manifest=get_source_manifest(),
+            gate_profile=get_gate_profile(self.config["review_gate"]),
+            question_bank=load_question_bank(
+                [self.config["question_bank_seed_dir"], self.config["question_bank_dir"]]
+            ),
             execution_metadata={
                 "execution_id": execution_id,
                 "provider": self.config["llm_provider"],

@@ -41,12 +41,14 @@ def create_question_extractor(llm):
             "질의와 권고 모두 심각도 높은 순으로 정렬하고, 특히 최우선 심의기준 세 가지"
             "(정부지원 필요성, 기술개발의 중요성, 시급성)를 겨냥한 항목을 반드시 포함하세요.\n"
             + get_review_criteria()
+            + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
-            ("human", "## 전문가 분석 보고서\n\n{reports}\n\n"
+            ("human", "## 기출·전형 질의 참고 (실제 심의 질의는 이런 패턴으로 나온다)\n\n{question_bank}\n\n"
+                      "## 전문가 분석 보고서\n\n{reports}\n\n"
                       "## 심사위원 패널-발표자 공방\n\n{debate_history}\n\n"
                       "## 전문위원회 위원장 의견\n\n{review_plan}\n\n"
                       "## 재정 검토 토론\n\n{audit_history}\n\n"
@@ -60,6 +62,7 @@ def create_question_extractor(llm):
                 reports.append(f"--- {name} ---\n{state[key]}")
 
         prompt_val = prompt.invoke({
+            "question_bank": state.get("question_bank") or "참고 자료 없음",
             "reports": "\n\n".join(reports) or "분석 보고서 없음",
             "debate_history": state["review_debate_state"]["history"] or "토론 내역 없음",
             "review_plan": state.get("review_plan", "의견 없음"),

@@ -22,6 +22,7 @@ def create_review_manager(llm):
             "2. 최종 의견은 승인, 조건부승인, 감액조정, 보류, 반려 중 하나여야 합니다.\n"
             "3. 결정을 내린 합리적 근거(Rationale)와 향후 해결해야 할 핵심 우려사항(Key Concerns)을 명확히 제시하세요."
             + get_review_criteria()
+            + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
         )
 

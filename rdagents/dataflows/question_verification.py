@@ -43,6 +43,7 @@ def verify_questions(
     run_dir: str | Path,
     actual_questions_text: str,
     history_path: str,
+    question_bank_dir: str | None = None,
 ) -> tuple[str, dict]:
     """실제 질의를 예측과 대조하고 (마크다운 보고서, 적중률 통계)를 반환.
 
@@ -88,5 +89,13 @@ def verify_questions(
     }
     with open(history_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    # 검증된 실제 질의를 질의 은행에 축적 — 다음 시뮬레이션의 예측 그라운딩에 사용
+    if question_bank_dir:
+        from rdagents.dataflows.question_bank import append_actual_questions
+
+        # 결과 구조 {results_dir}/{project_id}/{run_id} 에서 사업 ID 추출
+        project_id = run_dir.parent.name or "unknown"
+        append_actual_questions(question_bank_dir, project_id, actual_questions_text)
 
     return md, stats

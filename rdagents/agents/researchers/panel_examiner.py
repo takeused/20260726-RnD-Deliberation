@@ -30,6 +30,7 @@ def create_panel_examiner(llm):
             "3. 발표자의 이전 방어에 허점·회피·근거 부족이 있으면 그 지점을 재차 파고드세요.\n"
             "4. 예의는 갖추되 봐주지 마세요. 국가 예산이 걸린 심의입니다.\n"
             + get_review_criteria()
+            + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
         )
 

@@ -18,6 +18,8 @@ class Propagator:
         project_context: str = "",
         past_context: str = "",
         source_manifest: str = "",
+        gate_profile: str = "",
+        question_bank: str = "",
         execution_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """그래프 초기 상태 생성."""
@@ -28,6 +30,8 @@ class Propagator:
             "project_context": project_context,
             "past_context": past_context,
             "source_manifest": source_manifest,
+            "gate_profile": gate_profile,
+            "question_bank": question_bank,
             "rereview_comparison_md": "",
             "execution_metrics": [],
             "execution_metadata": execution_metadata or {},
