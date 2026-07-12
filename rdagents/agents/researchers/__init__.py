@@ -1,4 +1,4 @@
-from .con_reviewer import create_con_reviewer
-from .pro_reviewer import create_pro_reviewer
+from .panel_examiner import create_panel_examiner
+from .project_defender import create_project_defender
 
-__all__ = ["create_con_reviewer", "create_pro_reviewer"]
+__all__ = ["create_panel_examiner", "create_project_defender"]

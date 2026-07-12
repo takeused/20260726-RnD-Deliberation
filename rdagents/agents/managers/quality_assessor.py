@@ -31,7 +31,7 @@ def create_quality_assessor(llm):
         prompt = ChatPromptTemplate.from_messages([
             ("system", system),
             ("human", "## 입력 출처\n{sources}\n\n## 전문 분석\n{reports}\n\n"
-                      "## 찬반 토론\n{debate}\n\n## 전문위원회 의견\n{review_plan}\n\n"
+                      "## 심사 공방\n{debate}\n\n## 전문위원회 의견\n{review_plan}\n\n"
                       "## 재정 검토\n{audit}\n\n## 최종 결정\n{decision}\n\n"
                       "최종 결정을 그대로 정당화하지 말고 독립적으로 품질을 평가하세요."),
         ])

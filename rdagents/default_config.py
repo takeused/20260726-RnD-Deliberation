@@ -102,7 +102,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # 출력 언어
     "output_language": "Korean",
     # 토론 및 심의 설정
-    "max_debate_rounds": 2,    # 찬반 토론 라운드 수
+    "max_debate_rounds": 2,    # 심사 공방 라운드 수 (패널 질의+발표자 방어 = 1라운드)
     "max_audit_rounds": 1,     # 재정 검토 토론 라운드 수
     "max_recur_limit": 150,    # LangGraph 재귀 한도 (6인 분석가이므로 여유 확보)
     # 선택할 분석가 목록

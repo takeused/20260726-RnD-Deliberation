@@ -33,8 +33,8 @@ class Propagator:
             "execution_metadata": execution_metadata or {},
             "review_debate_state": ReviewDebateState(
                 {
-                    "pro_history": "",
-                    "con_history": "",
+                    "examiner_history": "",
+                    "defender_history": "",
                     "history": "",
                     "current_response": "",
                     "judge_decision": "",

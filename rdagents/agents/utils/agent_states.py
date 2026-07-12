@@ -9,10 +9,10 @@ from langgraph.graph import MessagesState
 from typing_extensions import TypedDict
 
 
-# 찬반 전문 심의 토론 상태
+# 심사위원 패널 vs 사업 발표자 공방 상태
 class ReviewDebateState(TypedDict):
-    pro_history: Annotated[str, "사업 추진 옹호 발언 히스토리"]
-    con_history: Annotated[str, "사업 우려/보류 발언 히스토리"]
+    examiner_history: Annotated[str, "심사위원 패널 질의·지적 히스토리"]
+    defender_history: Annotated[str, "사업 발표자 방어 히스토리"]
     history: Annotated[str, "전체 토론 히스토리"]
     current_response: Annotated[str, "최근 발언"]
     judge_decision: Annotated[str, "전문위원회 위원장 판정"]
@@ -48,8 +48,8 @@ class ReviewAgentState(MessagesState):
     feasibility_report: Annotated[str, "수행체계 분석 보고서"]
     regulatory_report: Annotated[str, "규제/윤리 검토 보고서"]
 
-    # 찬반 토론
-    review_debate_state: Annotated[ReviewDebateState, "찬반 심의 토론 상태"]
+    # 심사 공방 (패널 공격 vs 발표자 방어)
+    review_debate_state: Annotated[ReviewDebateState, "심사 공방 상태"]
     review_plan: Annotated[str, "전문위원회 위원장 종합 의견"]
 
     # 예산 조정

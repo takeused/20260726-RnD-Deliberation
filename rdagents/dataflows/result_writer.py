@@ -49,7 +49,7 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
     for key, filename in _ANALYST_FILES:
         write(filename, final_state.get(key, ""))
 
-    write("02_찬반토론_전문.md", final_state.get("review_debate_state", {}).get("history", ""))
+    write("02_심사공방_전문.md", final_state.get("review_debate_state", {}).get("history", ""))
     write(
         "03_전문위원회_의견.md",
         _render_json_field(final_state.get("review_plan", ""), ReviewPlan, render_review_plan),

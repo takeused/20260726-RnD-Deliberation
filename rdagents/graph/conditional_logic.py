@@ -53,16 +53,15 @@ class ConditionalLogic:
         return "Msg Clear Regulatory"
 
     def should_continue_review_debate(self, state: ReviewAgentState) -> str:
-        """찬반 토론 라운드 제어."""
-        # count는 한 명이 발언할 때마다 1씩 증가
-        # Pro, Con 두 명이므로 한 라운드당 count는 2 증가
+        """심사 공방 라운드 제어 (패널 질의 -> 발표자 방어 = 1라운드)."""
+        # count는 한 명이 발언할 때마다 1씩 증가, 라운드당 2 증가
         if state["review_debate_state"]["count"] >= 2 * self.max_debate_rounds:
             return "Review Manager"
-        
-        # 번갈아가며 토론
-        if state["review_debate_state"]["current_response"] == "Pro":
-            return "Con Reviewer"
-        return "Pro Reviewer"
+
+        # 패널 질의 다음은 발표자 방어, 그 다음은 다시 패널
+        if state["review_debate_state"]["current_response"] == "Examiner":
+            return "Project Defender"
+        return "Panel Examiner"
 
     def should_continue_audit_debate(self, state: ReviewAgentState) -> str:
         """재정 검토 3자 토론 라운드 제어."""

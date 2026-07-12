@@ -242,11 +242,11 @@ def run_smoke():
     for key in report_keys:
         assert final_state.get(key), f"{key} 비어 있음"
 
-    # 2. 찬반 토론: max_debate_rounds=2 → 발언 4회 (Pro 2, Con 2)
+    # 2. 심사 공방: max_debate_rounds=2 → 발언 4회 (패널 2, 발표자 2)
     rds = final_state["review_debate_state"]
-    assert rds["count"] == 4, f"찬반 토론 count={rds['count']}, 기대 4"
-    assert rds["history"].count("[사업 추진 옹호 위원]") == 2
-    assert rds["history"].count("[사업 우려/보류 위원]") == 2
+    assert rds["count"] == 4, f"심사 공방 count={rds['count']}, 기대 4"
+    assert rds["history"].count("[심사위원 패널]") == 2
+    assert rds["history"].count("[사업 발표자]") == 2
 
     # 3. 재정 검토: max_audit_rounds=1 → 발언 3회 (Agg, Cons, Neut 각 1)
     ads = final_state["audit_debate_state"]
@@ -272,7 +272,7 @@ def run_smoke():
         "00_입력문서_출처.md",
         "01a_분석_기술가치.md", "01b_분석_기술트렌드중복성.md", "01c_분석_경제재무.md",
         "01d_분석_정책부합성.md", "01e_분석_수행체계.md", "01f_분석_규제윤리.md",
-        "02_찬반토론_전문.md", "03_전문위원회_의견.md", "04_예산조정안.md",
+        "02_심사공방_전문.md", "03_전문위원회_의견.md", "04_예산조정안.md",
         "05_재정검토토론_전문.md", "06_최종결정.md", "07_예상질의응답.md", "08_보완권고.md",
         "09_정량평가표.md", "10_불확실성_반대근거.md",
         "11_재심의_전후비교.md", "12_실행관측성.md",
@@ -289,7 +289,7 @@ def run_smoke():
 
     print("\n=== 스모크 테스트 통과 ===")
     print(f"결과 저장 위치: {saved_dir}")
-    print(f"찬반 토론 발언: {rds['count']}회, 재정 검토 발언: {ads['count']}회")
+    print(f"심사 공방 발언: {rds['count']}회, 재정 검토 발언: {ads['count']}회")
     print(f"최종 결정: {decision_dict.get('verdict')}")
     return final_state
 

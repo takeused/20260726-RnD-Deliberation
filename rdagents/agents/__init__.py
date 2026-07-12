@@ -13,8 +13,8 @@ from .managers.question_extractor import create_question_extractor
 from .managers.quality_assessor import create_quality_assessor
 from .managers.review_manager import create_review_manager
 from .managers.rereview_comparator import create_rereview_comparator
-from .researchers.con_reviewer import create_con_reviewer
-from .researchers.pro_reviewer import create_pro_reviewer
+from .researchers.panel_examiner import create_panel_examiner
+from .researchers.project_defender import create_project_defender
 
 __all__ = [
     # Analysts
@@ -25,8 +25,8 @@ __all__ = [
     "create_feasibility_analyst",
     "create_regulatory_analyst",
     # Researchers
-    "create_pro_reviewer",
-    "create_con_reviewer",
+    "create_panel_examiner",
+    "create_project_defender",
     # Coordinator
     "create_budget_coordinator",
     # Auditors

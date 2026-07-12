@@ -9,14 +9,14 @@ from langgraph.prebuilt import ToolNode
 from rdagents.agents import (
     create_aggressive_auditor,
     create_budget_coordinator,
-    create_con_reviewer,
+    create_panel_examiner,
     create_conservative_auditor,
     create_economic_analyst,
     create_feasibility_analyst,
     create_final_approver,
     create_neutral_auditor,
     create_policy_analyst,
-    create_pro_reviewer,
+    create_project_defender,
     create_question_extractor,
     create_quality_assessor,
     create_regulatory_analyst,
@@ -123,10 +123,10 @@ def setup_graph(
         graph.add_node(spec.tool_node, _timed_node(spec.tool_node, ToolNode(tools_map[spec.key])))
         graph.add_node(spec.clear_node, _timed_node(spec.clear_node, _clear_messages))
 
-    # 토론 및 심의 노드 등록 (quick_llm 및 deep_llm 조합)
-    # 찬반 토론은 quick_llm, 종합 및 결정은 deep_llm 사용
-    graph.add_node("Pro Reviewer", _timed_node("Pro Reviewer", create_pro_reviewer(quick_llm), quick_model_name))
-    graph.add_node("Con Reviewer", _timed_node("Con Reviewer", create_con_reviewer(quick_llm), quick_model_name))
+    # 심사 공방 노드 등록 (quick_llm 및 deep_llm 조합)
+    # 공방은 quick_llm, 종합 및 결정은 deep_llm 사용
+    graph.add_node("Panel Examiner", _timed_node("Panel Examiner", create_panel_examiner(quick_llm), quick_model_name))
+    graph.add_node("Project Defender", _timed_node("Project Defender", create_project_defender(quick_llm), quick_model_name))
     graph.add_node("Review Manager", _timed_node("Review Manager", create_review_manager(deep_llm), deep_model_name))
 
     graph.add_node("Budget Coordinator", _timed_node("Budget Coordinator", create_budget_coordinator(deep_llm), deep_model_name))
@@ -150,7 +150,7 @@ def setup_graph(
     # 분석가 체이닝 (순차 실행)
     for i, spec in enumerate(analyst_plan.specs):
         is_last = (i == len(analyst_plan.specs) - 1)
-        next_node = "Pro Reviewer" if is_last else analyst_plan.specs[i + 1].agent_node
+        next_node = "Panel Examiner" if is_last else analyst_plan.specs[i + 1].agent_node
         
         # 조건부 로직 메서드 매핑
         cond_func = getattr(logic, f"should_continue_{spec.key}")
@@ -169,16 +169,16 @@ def setup_graph(
         graph.add_edge(spec.clear_node, next_node)
 
 
-    # 찬반 토론 루프
+    # 심사 공방 루프 (패널 질의 -> 발표자 방어)
     graph.add_conditional_edges(
-        "Pro Reviewer",
+        "Panel Examiner",
         logic.should_continue_review_debate,
-        {"Con Reviewer": "Con Reviewer", "Review Manager": "Review Manager"},
+        {"Project Defender": "Project Defender", "Review Manager": "Review Manager"},
     )
     graph.add_conditional_edges(
-        "Con Reviewer",
+        "Project Defender",
         logic.should_continue_review_debate,
-        {"Pro Reviewer": "Pro Reviewer", "Review Manager": "Review Manager"},
+        {"Panel Examiner": "Panel Examiner", "Review Manager": "Review Manager"},
     )
 
     # 위원장 -> 예산 조정관
