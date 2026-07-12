@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .env
 rdagents.egg-info/
+test_planning_report/
