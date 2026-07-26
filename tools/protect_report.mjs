@@ -68,7 +68,7 @@ const html = `<!doctype html>
     </form>
     <p class="note">복호화는 이 브라우저에서만 수행됩니다. 암호는 배포 링크와 분리해 전달하세요.</p>
   </main>
-  <iframe id="report" title="심의결과 보고서" sandbox hidden></iframe>
+  <iframe id="report" title="심의결과 보고서" sandbox="allow-same-origin" hidden></iframe>
   <script>
     const payload = ${payload};
     const fromBase64 = (value) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
@@ -76,6 +76,35 @@ const html = `<!doctype html>
     const input = document.querySelector('#password');
     const button = document.querySelector('#unlock-button');
     const message = document.querySelector('#message');
+    const report = document.querySelector('#report');
+    const unlockPanel = document.querySelector('#unlock-panel');
+
+    const bindInternalNavigation = () => {
+      const reportDocument = report.contentDocument;
+      if (!reportDocument) return;
+      reportDocument.addEventListener('click', (event) => {
+        const link = event.target?.closest?.('a[href^="#"]');
+        if (!link) return;
+        event.preventDefault();
+        const targetId = decodeURIComponent(link.getAttribute('href').slice(1));
+        const target = targetId
+          ? reportDocument.getElementById(targetId)
+          : reportDocument.documentElement;
+        if (!target) return;
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+        if (target !== reportDocument.documentElement) {
+          const hadTabindex = target.hasAttribute('tabindex');
+          if (!hadTabindex) target.setAttribute('tabindex', '-1');
+          target.focus({ preventScroll: true });
+          if (!hadTabindex) {
+            target.addEventListener('blur', () => target.removeAttribute('tabindex'), { once: true });
+          }
+        }
+      }, true);
+    };
+    report.addEventListener('load', bindInternalNavigation);
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       button.disabled = true;
@@ -87,9 +116,10 @@ const html = `<!doctype html>
           keyMaterial, { name:'AES-GCM', length:256 }, false, ['decrypt'],
         );
         const plain = await crypto.subtle.decrypt({ name:'AES-GCM', iv:fromBase64(payload.iv) }, key, fromBase64(payload.cipher));
-        document.querySelector('#report').srcdoc = new TextDecoder().decode(plain);
-        document.querySelector('#unlock-panel').hidden = true;
-        document.querySelector('#report').hidden = false;
+        report.srcdoc = new TextDecoder().decode(plain);
+        input.value = '';
+        unlockPanel.hidden = true;
+        report.hidden = false;
       } catch {
         message.textContent = '암호가 일치하지 않거나 문서가 손상되었습니다. 다시 확인하세요.';
         input.select();

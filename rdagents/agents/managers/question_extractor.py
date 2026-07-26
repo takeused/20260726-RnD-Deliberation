@@ -40,6 +40,8 @@ def create_question_extractor(llm):
             "구체적 수정·보강 방향.\n\n"
             "질의와 권고 모두 심각도 높은 순으로 정렬하고, 특히 최우선 심의기준 세 가지"
             "(정부지원 필요성, 기술개발의 중요성, 시급성)를 겨냥한 항목을 반드시 포함하세요.\n"
+            "권장 답변은 제출자료에서 확인한 사실만 단정하고, 확인하지 못한 항목은 가상의 기업·금액·MOU·해외사례를 만들지 말고 "
+            "'제출자료로 확인하지 못했습니다. [확인 필요: 자료명]'로 답하세요.\n"
             + get_review_criteria()
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()

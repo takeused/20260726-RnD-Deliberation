@@ -20,6 +20,7 @@ _ENV_OVERRIDES = {
     "RDAGENTS_REPORT_CHUNK_CHARS": "report_chunk_chars",
     "RDAGENTS_REPORT_TOP_K":       "report_retrieval_top_k",
     "RDAGENTS_TEMPERATURE":          "temperature",
+    "RDAGENTS_LLM_TIMEOUT":          "llm_timeout",
     "RDAGENTS_GOOGLE_THINKING_LEVEL":   "google_thinking_level",
     "RDAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
     "RDAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
@@ -102,6 +103,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "openai_reasoning_effort": None,
     "anthropic_effort": None,
     "temperature": None,
+    # Prevent a single unavailable provider request from stalling the whole
+    # deliberation graph indefinitely.  Providers may override this with
+    # RDAGENTS_LLM_TIMEOUT (seconds).
+    "llm_timeout": 120,
     # 체크포인트
     "checkpoint_enabled": False,
     "max_memory_entries": 5,

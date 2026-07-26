@@ -14,6 +14,7 @@ from rdagents.agents.utils.gate_profiles import get_gate_profile
 from rdagents.dataflows.memory_log import append_memory, load_past_context
 from rdagents.dataflows.question_bank import load_question_bank
 from rdagents.dataflows.project_loader import (
+    get_project_facts,
     get_source_manifest,
     set_current_project,
     set_current_report,
@@ -77,6 +78,8 @@ class RDReviewGraph:
         kwargs = {}
         if self.config["temperature"] is not None:
             kwargs["temperature"] = self.config["temperature"]
+        if self.config.get("llm_timeout") is not None:
+            kwargs["timeout"] = self.config["llm_timeout"]
         # 프로바이더마다 사고 수준 인자명이 다름
         effort_map = {
             "google": ("thinking_level", self.config["google_thinking_level"]),
@@ -133,6 +136,7 @@ class RDReviewGraph:
             project_id=project_id,
             review_year=review_year,
             project_context=f"프로젝트 ID: {project_id} ({review_year}년도 예산 심의)",
+            project_facts=get_project_facts(),
             past_context=past_context,
             source_manifest=get_source_manifest(),
             gate_profile=get_gate_profile(self.config["review_gate"]),
@@ -145,6 +149,8 @@ class RDReviewGraph:
                 "provider": self.config["llm_provider"],
                 "deep_model": self.config["deep_think_llm"],
                 "quick_model": self.config["quick_think_llm"],
+                "review_year": review_year,
+                "review_gate": self.config["review_gate"],
                 "checkpoint_enabled": self.config["checkpoint_enabled"],
                 "checkpoint_path": self.config["checkpoint_path"] if self.config["checkpoint_enabled"] else None,
             },

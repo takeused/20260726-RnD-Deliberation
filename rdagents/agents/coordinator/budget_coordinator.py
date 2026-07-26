@@ -4,7 +4,11 @@ import json
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from rdagents.agents.schemas import BudgetProposal, render_budget_proposal
+from rdagents.agents.schemas import (
+    BudgetProposal,
+    align_budget_proposal_to_request,
+    render_budget_proposal,
+)
 from rdagents.agents.utils.agent_utils import get_language_instruction, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
 from rdagents.dataflows.project_loader import get_budget_details
@@ -42,7 +46,16 @@ def create_budget_coordinator(llm):
         plan_json = state.get("review_plan", "심의 의견 없음")
 
         prompt_val = prompt.invoke({"review_plan": plan_json, "budget_info": budget_info})
-        call = invoke_structured_model(llm, BudgetProposal, prompt_val, "Budget Coordinator")
+        requested_budget = state.get("project_facts", {}).get("requested_budget_eok")
+        call = invoke_structured_model(
+            llm,
+            BudgetProposal,
+            prompt_val,
+            "Budget Coordinator",
+            post_validate=lambda proposal: align_budget_proposal_to_request(
+                proposal, requested_budget
+            ),
+        )
         proposal = call.model
 
         if proposal is None:

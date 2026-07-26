@@ -3,6 +3,7 @@
 
 import enum
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -103,6 +104,39 @@ def test_budget_schema_rejects_inconsistent_amounts():
         )
 
 
+def test_verified_budget_facts_anchor_budget_and_final_decision(tmp_path):
+    import pytest
+
+    from rdagents.agents.schemas import (
+        BudgetProposal,
+        FinalDecision,
+        align_budget_proposal_to_request,
+        align_final_decision_to_budget,
+    )
+    from rdagents.dataflows.project_loader import get_project_facts, set_current_report
+
+    report = tmp_path / "예산검증.md"
+    report.write_text("사업규모: 22,600백만원(2027~2031)\n", encoding="utf-8")
+    set_current_report(str(report), project_id="budget-anchor")
+    facts = get_project_facts()
+    assert facts["requested_budget_eok"] == 226.0
+    assert "L1-L1" in facts["budget_source"]
+
+    proposal = BudgetProposal(
+        action="원안통과", reasoning="원안 유지", original_budget_billion=0, proposed_budget_billion=0,
+    )
+    aligned = align_budget_proposal_to_request(proposal, facts["requested_budget_eok"])
+    assert aligned.original_budget_billion == 226.0
+    assert aligned.proposed_budget_billion == 226.0
+
+    decision = FinalDecision(
+        verdict="조건부승인", executive_summary="조건부 승인", review_rationale="근거 보완 필요",
+        approved_budget_billion=22.6, conditions="근거자료 제출",
+    )
+    with pytest.raises(ValueError, match="검증 예산안"):
+        align_final_decision_to_budget(decision, 226.0)
+
+
 def test_report_identity_and_memory_limits(tmp_path):
     from rdagents.dataflows.memory_log import append_memory, load_past_context
     from rdagents.dataflows.project_loader import set_current_report, validate_project_id
@@ -159,6 +193,20 @@ def test_common_prompt_forbids_fabricated_evidence():
     assert "사업보고서 주장" in instruction and "외부근거 확인" in instruction
 
 
+def test_protected_report_keeps_internal_navigation_unlocked():
+    """암호 해제 후 목차 링크가 상위 잠금 페이지를 다시 탐색하지 않아야 한다."""
+    generator = (
+        Path(__file__).resolve().parent.parent / "tools" / "protect_report.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert 'sandbox="allow-same-origin"' in generator
+    assert "bindInternalNavigation" in generator
+    assert "event.preventDefault()" in generator
+    assert "target.scrollIntoView" in generator
+    assert "input.value = ''" in generator
+    assert "sessionStorage" not in generator and "localStorage" not in generator
+
+
 def run_checkpoint_and_observability():
     """SQLite 체크포인트 생성과 실행 관측값 누적을 검증한다."""
     import sqlite3
@@ -192,6 +240,12 @@ class _StructuredStub:
 
     def invoke(self, _prompt_val):
         instance = _default_instance(self._schema)
+        if self._schema.__name__ == "FinalDecision":
+            messages = _prompt_val.to_messages() if hasattr(_prompt_val, "to_messages") else _prompt_val
+            prompt_text = "\n".join(str(getattr(message, "content", message)) for message in messages)
+            match = re.search(r'"proposed_budget_billion"\s*:\s*([0-9.]+)', prompt_text)
+            if match:
+                instance.approved_budget_billion = float(match.group(1))
         if self._include_raw:
             raw = AIMessage(
                 content="",
@@ -290,6 +344,7 @@ def run_smoke():
         "05_재정검토토론_전문.md", "06_최종결정.md", "07_예상질의응답.md", "08_보완권고.md",
         "09_정량평가표.md", "10_불확실성_반대근거.md",
         "11_재심의_전후비교.md", "12_실행관측성.md",
+        "14_검증보고서.md",
         "심의종합리포트.html",
     ]
     for filename in expected_files:
@@ -301,8 +356,11 @@ def run_smoke():
     html_report = saved_dir / "심의종합리포트.html"
     html_text = html_report.read_text(encoding="utf-8")
     assert "국가연구개발사업 심의결과 보고서" in html_text
+    assert "심의 기준연도</strong> 2027" in html_text
     assert 'id="decision"' in html_text and 'id="appendix"' in html_text
     assert "<pre>" not in html_text, "Markdown 원문이 pre 블록으로 그대로 노출됨"
+    validation_text = (saved_dir / "14_검증보고서.md").read_text(encoding="utf-8")
+    assert "생성물 근거 검증 보고서" in validation_text
     # 구조화 노드가 재포장한 메시지에도 usage_metadata가 보존되어 토큰이 집계돼야 한다
     total_tokens = sum(m.get("total_tokens", 0) for m in final_state["execution_metrics"])
     assert total_tokens > 0, "토큰 집계가 전부 0 — usage_metadata 유실"

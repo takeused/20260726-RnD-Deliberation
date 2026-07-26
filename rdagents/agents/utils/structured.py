@@ -93,6 +93,7 @@ def invoke_structured_model(
     prompt_val: Any,
     agent_name: str,
     max_attempts: int = 2,
+    post_validate: Callable[[T], T] | None = None,
 ) -> StructuredCallResult:
     """구조화 출력을 호출해 스키마 인스턴스와 토큰 사용량을 반환한다.
 
@@ -131,7 +132,14 @@ def invoke_structured_model(
             model, usage, error_text = _parse_attempt(result, schema)
             last_usage = usage or last_usage
             if model is not None:
-                return StructuredCallResult(model, last_usage)
+                try:
+                    if post_validate is not None:
+                        model = post_validate(model)
+                except Exception as exc:
+                    error_text = str(exc)
+                    model = None
+                if model is not None:
+                    return StructuredCallResult(model, last_usage)
             logger.warning(
                 "%s: structured attempt %d/%d parse/validation failed (%s)",
                 agent_name, attempt, max_attempts, error_text,

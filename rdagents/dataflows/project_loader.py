@@ -6,7 +6,7 @@ import json
 import os
 import re
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,7 @@ class ProjectContext:
     chunks: tuple["DocumentChunk", ...] = ()
     retrieval_top_k: int = 4
     source_files: tuple[tuple[str, str, int], ...] = ()
+    project_facts: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,66 @@ class DocumentChunk:
 _current_context: ContextVar[ProjectContext | None] = ContextVar(
     "rdagents_project_context", default=None
 )
+
+
+def _format_eok(value: float | None) -> str:
+    """억원 단위를 불필요한 소수점 없이 표시한다."""
+    if value is None:
+        return "확인 필요"
+    return f"{value:,.1f}".rstrip("0").rstrip(".")
+
+
+def _extract_budget_facts(text: str, source_name: str) -> dict[str, Any]:
+    """입력 원문에서 총사업비를 코드로 정규화한다.
+
+    원문 모드의 금액은 LLM 출력이 아니라 문서의 명시적 '사업규모/총예산' 표기만
+    사용한다. 1억원=100백만원을 기준으로 환산한다.
+    """
+    labels = r"(?:사업\s*규모|총\s*(?:요청\s*)?예산|총정부지원|총사업비|요청\s*예산)"
+    patterns = (
+        (re.compile(rf"{labels}.{{0,40}}?(?P<amount>[0-9][0-9,]*(?:\.\d+)?)\s*백만원"), 0.01),
+        (re.compile(rf"{labels}.{{0,40}}?(?P<amount>[0-9][0-9,]*(?:\.\d+)?)\s*억\s*원?"), 1.0),
+    )
+    for line_no, line in enumerate(text.splitlines(), 1):
+        normalized = re.sub(r"\s+", " ", line)
+        for pattern, multiplier in patterns:
+            match = pattern.search(normalized)
+            if not match:
+                continue
+            amount = float(match.group("amount").replace(",", "")) * multiplier
+            if amount > 0:
+                return {
+                    "requested_budget_eok": round(amount, 4),
+                    "budget_source": f"[출처: {source_name} L{line_no}-L{line_no}]",
+                    "budget_status": "verified",
+                }
+    return {
+        "requested_budget_eok": None,
+        "budget_source": "[확인 필요: 입력 문서의 총사업비 표기]",
+        "budget_status": "unverified",
+    }
+
+
+def _input_quality_note(text: str) -> str:
+    """PDF 변환본의 문자 깨짐·표 병합 가능성을 실행 초기에 드러낸다."""
+    replacement_count = text.count("�")
+    placeholder_count = len(re.findall(r"\?{2,}", text))
+    if replacement_count or placeholder_count:
+        return (
+            f"주의: 입력 텍스트에 문자 깨짐/placeholder {replacement_count + placeholder_count}건이 있어 "
+            "인용과 표 해석은 원본 PDF 페이지 대조가 필요합니다."
+        )
+    return "입력 텍스트 문자 깨짐 징후 없음"
+
+
+def _json_project_facts(project: dict[str, Any]) -> dict[str, Any]:
+    """구조화 샘플 데이터 모드의 예산 기준값을 같은 형식으로 제공한다."""
+    value = project.get("requested_budget_billion_krw")
+    return {
+        "requested_budget_eok": float(value) if value is not None else None,
+        "budget_source": "[출처: 구조화 샘플 데이터 requested_budget_billion_krw]",
+        "budget_status": "verified" if value is not None else "unverified",
+    }
 
 
 def validate_project_id(project_id: str) -> str:
@@ -70,8 +131,10 @@ def load_project(project_id: str, sample_data_dir: str | None = None) -> dict[st
 def set_current_project(project_id: str, sample_data_dir: str | None = None) -> None:
     """현재 심의 대상 프로젝트를 설정 (구조화 JSON 모드)."""
     project_id = validate_project_id(project_id)
-    load_project(project_id, sample_data_dir)  # 존재 검증
-    _current_context.set(ProjectContext(project_id, sample_data_dir, None))
+    project = load_project(project_id, sample_data_dir)  # 존재 검증
+    _current_context.set(
+        ProjectContext(project_id, sample_data_dir, None, project_facts=_json_project_facts(project))
+    )
 
 
 def _build_chunks(
@@ -154,7 +217,7 @@ def set_current_report(
     _current_context.set(
         ProjectContext(
             project_id, None, report_text, path.name, tuple(chunks), retrieval_top_k,
-            tuple(source_files),
+            tuple(source_files), _extract_budget_facts(report_text, path.name),
         )
     )
     return project_id
@@ -226,14 +289,38 @@ def get_source_manifest() -> str:
     source_lines = "\n".join(
         f"- {kind}: {name} ({length:,}자)" for name, kind, length in context.source_files
     )
+    facts = context.project_facts
+    budget = _format_eok(facts.get("requested_budget_eok"))
     return (
         f"{source_lines}\n"
+        f"- 검증 총사업비: {budget}억원 ({facts.get('budget_source', '확인 필요')})\n"
+        f"- 예산 검증 상태: {facts.get('budget_status', 'unverified')}\n"
+        f"- 입력 품질 점검: {_input_quality_note(context.report_text)}\n"
         f"- 문서 길이: {len(context.report_text):,}자\n"
         f"- 검색 청크 수: {len(context.chunks)}\n"
         f"- 분석가별 최대 검색 청크: {context.retrieval_top_k}\n"
         "- 출처 표기 형식: [출처: 파일명 L시작-L끝]\n"
         "- 주의: 줄 번호는 입력 텍스트 파일 기준"
     )
+
+
+def get_project_facts() -> dict[str, Any]:
+    """현재 실행에 고정된 코드 검증 사업 사실을 반환한다."""
+    context = _current_context.get()
+    if context is None:
+        raise RuntimeError("현재 심의 대상 프로젝트가 설정되지 않았습니다.")
+    return dict(context.project_facts)
+
+
+def get_source_line_counts() -> dict[str, int]:
+    """현재 실행에서 인용 가능한 입력 파일별 마지막 줄 번호를 반환한다."""
+    context = _current_context.get()
+    if context is None or context.report_text is None:
+        return {}
+    counts: dict[str, int] = {}
+    for chunk in context.chunks:
+        counts[chunk.source_name] = max(counts.get(chunk.source_name, 0), chunk.end_line)
+    return counts
 
 
 @tool
@@ -302,7 +389,14 @@ def get_budget_details() -> str:
     """예산 상세 정보(요청 예산, 기간, 민간 투자, 경제적 파급효과)를 조회합니다."""
     raw = _raw_report("예산 상세(총액, 연차별, 민간 투자)")
     if raw is not None:
-        return raw
+        facts = get_project_facts()
+        return (
+            "## 코드 검증 예산 기준\n"
+            f"- **총 요청 예산**: {_format_eok(facts.get('requested_budget_eok'))}억원\n"
+            f"- **근거**: {facts.get('budget_source', '확인 필요')}\n"
+            f"- **검증 상태**: {facts.get('budget_status', 'unverified')}\n\n"
+            + raw
+        )
     d = _get_current()
     annual = d['requested_budget_billion_krw'] / d['duration_years']
     return (

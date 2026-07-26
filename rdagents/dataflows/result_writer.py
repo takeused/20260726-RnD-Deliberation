@@ -18,6 +18,7 @@ from rdagents.agents.schemas import (
     render_final_decision,
     render_review_plan,
 )
+from rdagents.dataflows.output_validation import build_validation_report
 
 _ANALYST_FILES = [
     ("tech_value_report", "01a_분석_기술가치.md"),
@@ -48,6 +49,7 @@ _REPORT_FILES = [
     ("10_불확실성_반대근거.md", "불확실성·반대 근거"),
     ("11_재심의_전후비교.md", "재심의 전후 비교"),
     ("12_실행관측성.md", "실행 관측성"),
+    ("14_검증보고서.md", "생성물 근거 검증"),
 ]
 
 
@@ -161,9 +163,11 @@ def _write_html_report(out_dir: Path, project_id: str, metadata: dict) -> Path:
     if project_name == "확인 필요":
         project_name = project_id
     source_manifest = documents.get("00_입력문서_출처.md", "")
+    validation_status = _find_label(documents.get("14_검증보고서.md", ""), "검증 상태")
     execution_id = escape(str(metadata.get("execution_id", "알 수 없음")))
     provider = escape(str(metadata.get("provider", "알 수 없음")))
     deep_model = escape(str(metadata.get("deep_model", "알 수 없음")))
+    review_year = escape(str(metadata.get("review_year", "알 수 없음")))
 
     appendix_items = []
     appendix_files = [
@@ -178,6 +182,7 @@ def _write_html_report(out_dir: Path, project_id: str, metadata: dict) -> Path:
         ("09_정량평가표.md", "정량 평가표"),
         ("10_불확실성_반대근거.md", "불확실성·반대 근거"),
         ("12_실행관측성.md", "실행 관측성"),
+        ("14_검증보고서.md", "생성물 근거 검증"),
     ]
     for filename, title in appendix_files:
         if raw := documents.get(filename):
@@ -208,10 +213,10 @@ details {{ border:1px solid var(--line); margin:10px 0; background:#fcfdfd; }} s
 @media (max-width:860px) {{ .page {{ padding:0 0 42px; }} .masthead,section {{ padding:24px 20px; }} .layout {{ display:block; margin-top:0; }} .toc {{ position:static; display:flex; overflow-x:auto; gap:4px; border-width:0 0 1px; padding:10px 16px; white-space:nowrap; }} .toc p {{ display:none; }} .toc a {{ display:inline-block; }} .facts,.decision-grid {{ grid-template-columns:1fr; }} summary span {{ display:none; }} }}
 @media print {{ body {{ background:#fff; font-size:11pt; }} .page {{ max-width:none; padding:0; }} .toc,.skip-link {{ display:none; }} .masthead,section {{ box-shadow:none; break-inside:avoid; }} details {{ border:0; }} details[open] summary {{ display:none; }} .detail-body {{ display:none; }} }}
 </style></head><body><a class="skip-link" href="#report-main">본문으로 건너뛰기</a><div class="page">
-<header class="masthead"><p class="kicker">국가연구개발사업 심의결과 보고서</p><h1>{escape(project_name)}</h1><p class="subtitle">신규사업 심의 시뮬레이션 결과 · 의사결정용 요약본</p><div class="meta"><span><strong>심의 기준연도</strong> 2027</span><span><strong>수행 모델</strong> {provider} / {deep_model}</span><span><strong>실행 ID</strong> {execution_id}</span></div></header>
+<header class="masthead"><p class="kicker">국가연구개발사업 심의결과 보고서</p><h1>{escape(project_name)}</h1><p class="subtitle">신규사업 심의 시뮬레이션 결과 · 의사결정용 요약본</p><div class="meta"><span><strong>심의 기준연도</strong> {review_year}</span><span><strong>수행 모델</strong> {provider} / {deep_model}</span><span><strong>실행 ID</strong> {execution_id}</span></div></header>
 <div class="layout"><nav class="toc" aria-label="보고서 목차"><p>목차</p><a href="#decision">심의 의결</a><a href="#overview">사업 개요</a><a href="#issues">핵심 쟁점</a><a href="#conditions">이행 조건</a><a href="#questions">질의 대비</a><a href="#appendix">상세 검토자료</a></nav><main class="content" id="report-main">
-<section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div></div></div></section>
-<section id="overview"><h2>2. 사업 개요</h2><dl class="facts"><div class="fact"><dt>사업명</dt><dd>{_inline_html(project_name)}</dd></div><div class="fact"><dt>심의 기준연도</dt><dd>2027년</dd></div><div class="fact"><dt>예산 판단</dt><dd>{_inline_html(approved_budget)}</dd></div></dl><h3>입력 자료</h3><div class="source">{_markdown_to_html(source_manifest)}</div></section>
+<section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div><div class="notice"><strong>생성물 근거 검증</strong><br>{_inline_html(validation_status)} · 상세 내용은 부록의 생성물 근거 검증을 확인하세요.</div></div></div></section>
+<section id="overview"><h2>2. 사업 개요</h2><dl class="facts"><div class="fact"><dt>사업명</dt><dd>{_inline_html(project_name)}</dd></div><div class="fact"><dt>심의 기준연도</dt><dd>{review_year}년</dd></div><div class="fact"><dt>예산 판단</dt><dd>{_inline_html(approved_budget)}</dd></div></dl><h3>입력 자료</h3><div class="source">{_markdown_to_html(source_manifest)}</div></section>
 <section id="issues"><h2>3. 핵심 심의 쟁점 및 보완 요구</h2>{_markdown_to_html(documents.get("08_보완권고.md", "내용이 없습니다."))}</section>
 <section id="conditions"><h2>4. 조건부 승인 이행 조건</h2>{_markdown_to_html(final.split("**이행 조건**:", 1)[1].strip() if "**이행 조건**:" in final else final)}</section>
 <section id="questions"><h2>5. 예상 질의 및 답변 준비</h2>{_markdown_to_html(documents.get("07_예상질의응답.md", "내용이 없습니다."))}</section>
@@ -286,7 +291,31 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
             f"{item.get('elapsed_seconds', 0):.4f} | {item.get('input_tokens', 0)} | "
             f"{item.get('output_tokens', 0)} | {item.get('total_tokens', 0)} |"
         )
+    by_node = {}
+    for item in metrics:
+        node = item.get("node", "알 수 없음")
+        aggregate = by_node.setdefault(node, {"calls": 0, "seconds": 0.0, "tokens": 0})
+        aggregate["calls"] += 1
+        aggregate["seconds"] += item.get("elapsed_seconds", 0) or 0
+        aggregate["tokens"] += item.get("total_tokens", 0) or 0
+    observation.extend(["", "## 노드별 합계", "", "| 노드 | 호출 수 | 누적 시간(초) | 총 토큰 |", "|---|---:|---:|---:|"])
+    for node, aggregate in sorted(by_node.items(), key=lambda item: item[1]["seconds"], reverse=True):
+        observation.append(
+            f"| {node} | {aggregate['calls']} | {aggregate['seconds']:.4f} | {aggregate['tokens']:,} |"
+        )
+    bottlenecks = sorted(metrics, key=lambda item: item.get("elapsed_seconds", 0), reverse=True)[:3]
+    observation.extend(["", "## 병목 후보 (단일 호출 상위 3건)", ""])
+    observation.extend(
+        f"- {item.get('node')}: {item.get('elapsed_seconds', 0):.4f}초 / {item.get('total_tokens', 0):,}토큰"
+        for item in bottlenecks
+    )
     write("12_실행관측성.md", "\n".join(observation))
+    documents_for_validation = {
+        filename: (out_dir / filename).read_text(encoding="utf-8")
+        for filename, _ in _REPORT_FILES
+        if (out_dir / filename).exists()
+    }
+    write("14_검증보고서.md", build_validation_report(documents_for_validation))
     _write_html_report(out_dir, project_id, metadata)
 
     return out_dir

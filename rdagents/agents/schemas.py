@@ -130,6 +130,26 @@ class BudgetProposal(BaseModel):
         return self
 
 
+def align_budget_proposal_to_request(
+    proposal: BudgetProposal, requested_budget_eok: float | None
+) -> BudgetProposal:
+    """원문에서 검증한 예산을 예산 조정안의 기준값으로 강제한다."""
+    if requested_budget_eok is None:
+        return proposal
+    if requested_budget_eok <= 0:
+        raise ValueError("검증된 원래 요청 예산은 0보다 커야 합니다.")
+
+    values = proposal.model_dump()
+    values["original_budget_billion"] = requested_budget_eok
+    if proposal.action == BudgetAction.FULL_APPROVE:
+        values["proposed_budget_billion"] = requested_budget_eok
+    elif proposal.action in {BudgetAction.DEFER, BudgetAction.REJECT}:
+        values["proposed_budget_billion"] = None
+    elif proposal.proposed_budget_billion is None:
+        raise ValueError("감액/증액 조정안에는 검증 기준과 비교 가능한 제안 예산이 필요합니다.")
+    return BudgetProposal(**values)
+
+
 def render_budget_proposal(proposal: BudgetProposal) -> str:
     parts = [
         f"**예산 조정 방향**: {proposal.action.value}",
@@ -198,6 +218,26 @@ class FinalDecision(BaseModel):
         return self
 
 
+def align_final_decision_to_budget(
+    decision: FinalDecision, approved_budget_eok: float | None
+) -> FinalDecision:
+    """최종 결정의 승인 예산이 직전 검증 예산안과 일치하는지 확인한다."""
+    if decision.verdict in {ReviewVerdict.DEFER, ReviewVerdict.REJECT}:
+        if decision.approved_budget_billion not in (None, 0):
+            raise ValueError("보류/반려 결정은 승인 예산을 포함할 수 없습니다.")
+        return decision
+    if approved_budget_eok is None:
+        return decision
+    if decision.approved_budget_billion is None:
+        raise ValueError("승인성 결정에는 검증 예산안과 같은 승인 예산이 필요합니다.")
+    if abs(decision.approved_budget_billion - approved_budget_eok) > 0.01:
+        raise ValueError(
+            "최종 승인 예산이 검증 예산안과 다릅니다: "
+            f"{decision.approved_budget_billion}억원 != {approved_budget_eok}억원"
+        )
+    return decision
+
+
 # ---------------------------------------------------------------------------
 # 예상 질의 추출기 출력
 # ---------------------------------------------------------------------------
@@ -233,7 +273,8 @@ class AnticipatedQuestion(BaseModel):
     suggested_answer: str = Field(
         description=(
             "사업 담당자가 준비해야 할 권장 답변 초안. 입력 근거에 실제 수치가 있을 때만 포함하고, "
-            "근거가 없는 수치·기관·사례는 만들지 말고 [확인 필요: 필요한 자료]로 표시."
+            "근거가 없는 수치·기관·사례는 만들지 말고 '제출자료로 확인하지 못했습니다. "
+            "[확인 필요: 필요한 자료]'로만 표시. 사실형 문장에는 [출처: 파일명 L시작-L끝]을 붙일 것."
         ),
     )
 

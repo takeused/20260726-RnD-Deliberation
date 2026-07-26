@@ -38,6 +38,7 @@ class ReviewAgentState(MessagesState):
     project_id: Annotated[str, "심의 대상 사업 ID"]
     review_year: Annotated[str, "심의 대상 연도"]
     project_context: Annotated[str, "사업계획서 전체 컨텍스트"]
+    project_facts: Annotated[dict, "코드 검증 사업 사실(예산·출처 등)"]
     sender: Annotated[str, "메시지 발신 에이전트"]
 
     # 6개 분석가 보고서

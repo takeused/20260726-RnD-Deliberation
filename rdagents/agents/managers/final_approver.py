@@ -1,8 +1,15 @@
 """🏆 최종 심의위원장 (Final Approver) — 기획처 재정 검토 토론을 종합하여 최종 결정 도출."""
 
+import json
+
 from langchain_core.prompts import ChatPromptTemplate
 
-from rdagents.agents.schemas import FinalDecision, render_final_decision
+from rdagents.agents.schemas import (
+    BudgetProposal,
+    FinalDecision,
+    align_final_decision_to_budget,
+    render_final_decision,
+)
 from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
 
@@ -60,7 +67,21 @@ def create_final_approver(llm):
             "audit_history": clip_text(audit_history, state),
             "past_context": clip_text(state.get("past_context") or "", state) or "이전 심의 이력 없음 (신규 심의).",
         })
-        call = invoke_structured_model(llm, FinalDecision, prompt_val, "Final Approver")
+        approved_budget = state.get("project_facts", {}).get("requested_budget_eok")
+        try:
+            proposal = BudgetProposal(**json.loads(budget_plan))
+            approved_budget = proposal.proposed_budget_billion
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        call = invoke_structured_model(
+            llm,
+            FinalDecision,
+            prompt_val,
+            "Final Approver",
+            post_validate=lambda decision: align_final_decision_to_budget(
+                decision, approved_budget
+            ),
+        )
         decision = call.model
 
         if decision is None:
