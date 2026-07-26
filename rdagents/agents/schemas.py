@@ -231,7 +231,10 @@ class AnticipatedQuestion(BaseModel):
         description="이 질의가 도출된 근거 (분석 보고서·토론에서 지적된 취약점 요약).",
     )
     suggested_answer: str = Field(
-        description="사업 담당자가 준비해야 할 권장 답변 초안. 구체적 근거·수치 포함.",
+        description=(
+            "사업 담당자가 준비해야 할 권장 답변 초안. 입력 근거에 실제 수치가 있을 때만 포함하고, "
+            "근거가 없는 수치·기관·사례는 만들지 말고 [확인 필요: 필요한 자료]로 표시."
+        ),
     )
 
 

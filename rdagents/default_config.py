@@ -1,6 +1,7 @@
 import os
 
 _RDAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".rdagents")
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 _ENV_OVERRIDES = {
     "RDAGENTS_LLM_PROVIDER":         "llm_provider",
@@ -60,10 +61,10 @@ def _apply_env_overrides(config: dict) -> dict:
 
 
 DEFAULT_CONFIG = _apply_env_overrides({
-    "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
+    "project_dir": _PROJECT_ROOT,
     "results_dir": os.getenv(
         "RDAGENTS_RESULTS_DIR",
-        os.path.join(_RDAGENTS_HOME, "logs"),
+        os.path.join(_PROJECT_ROOT, "results"),
     ),
     "data_cache_dir": os.getenv(
         "RDAGENTS_CACHE_DIR",
@@ -92,9 +93,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
         os.path.join(os.path.dirname(__file__), "..", "sample_data"),
     ),
     # LLM 설정
-    "llm_provider": "google",
-    "deep_think_llm": "gemini-3.1-pro-preview",
-    "quick_think_llm": "gemini-3.5-flash",
+    "llm_provider": "cerebras",
+    "deep_think_llm": "gpt-oss-120b",
+    "quick_think_llm": "gpt-oss-120b",
     "backend_url": None,
     # 프로바이더별 사고 수준 설정
     "google_thinking_level": None,

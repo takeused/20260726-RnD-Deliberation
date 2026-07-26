@@ -15,7 +15,7 @@ _KEY_OPTIONAL_PROVIDERS = {"bedrock", "ollama", "openai_compatible"}
 PROFILES = {
     "test-cerebras": {
         "llm_provider": "cerebras",
-        "deep_think_llm": "zai-glm-4.7",
+        "deep_think_llm": "gpt-oss-120b",
         "quick_think_llm": "gpt-oss-120b",
         # 무료 티어 컨텍스트 8K 토큰 제한 대응
         "prompt_char_budget": 1200,
@@ -135,7 +135,7 @@ def main():
 
     provider = (
         overrides["llm_provider"] if overrides and "llm_provider" in overrides
-        else os.getenv("RDAGENTS_LLM_PROVIDER", "google")
+        else os.getenv("RDAGENTS_LLM_PROVIDER", "cerebras")
     )
     auth_error = _validate_provider_auth(provider)
     if auth_error:
@@ -234,6 +234,7 @@ def main():
             print("- 10_불확실성_반대근거.md : 불일치·반대 근거·추가 확인 자료")
             print("- 11_재심의_전후비교.md : 해소·미해소·신규 지적사항")
             print("- 12_실행관측성.md : 모델·노드 시간·토큰·비용 상태")
+            print("- 심의종합리포트.html : 전체 결과 통합 열람용 리포트")
             
     except Exception as e:
         print(f"\n[오류 발생]: {e}", file=sys.stderr)

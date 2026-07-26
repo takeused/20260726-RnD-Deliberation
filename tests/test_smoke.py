@@ -150,6 +150,15 @@ def test_quality_score_is_weighted_in_code():
     assert report.overall_confidence == 80.0
 
 
+def test_common_prompt_forbids_fabricated_evidence():
+    from rdagents.agents.utils.agent_utils import get_language_instruction
+
+    instruction = get_language_instruction()
+    assert "제공되지 않은 통계" in instruction
+    assert "[확인 필요: 필요한 자료]" in instruction
+    assert "사업보고서 주장" in instruction and "외부근거 확인" in instruction
+
+
 def run_checkpoint_and_observability():
     """SQLite 체크포인트 생성과 실행 관측값 누적을 검증한다."""
     import sqlite3
@@ -281,6 +290,7 @@ def run_smoke():
         "05_재정검토토론_전문.md", "06_최종결정.md", "07_예상질의응답.md", "08_보완권고.md",
         "09_정량평가표.md", "10_불확실성_반대근거.md",
         "11_재심의_전후비교.md", "12_실행관측성.md",
+        "심의종합리포트.html",
     ]
     for filename in expected_files:
         assert (saved_dir / filename).exists(), f"{filename} 미생성"
@@ -288,6 +298,11 @@ def run_smoke():
     assert final_state.get("uncertainty_report_md"), "불확실성 보고서 비어 있음"
     assert final_state.get("rereview_comparison_md"), "재심의 비교 보고서 비어 있음"
     assert final_state.get("execution_metrics"), "실행 관측값 비어 있음"
+    html_report = saved_dir / "심의종합리포트.html"
+    html_text = html_report.read_text(encoding="utf-8")
+    assert "국가연구개발사업 심의결과 보고서" in html_text
+    assert 'id="decision"' in html_text and 'id="appendix"' in html_text
+    assert "<pre>" not in html_text, "Markdown 원문이 pre 블록으로 그대로 노출됨"
     # 구조화 노드가 재포장한 메시지에도 usage_metadata가 보존되어 토큰이 집계돼야 한다
     total_tokens = sum(m.get("total_tokens", 0) for m in final_state["execution_metrics"])
     assert total_tokens > 0, "토큰 집계가 전부 0 — usage_metadata 유실"

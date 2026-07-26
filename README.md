@@ -28,10 +28,14 @@ pip install -e .
 
 # 환경 변수 설정
 # .env.example을 .env로 복사하고 API 키를 입력하세요.
-# GOOGLE_API_KEY (또는 OPENAI_API_KEY) 설정 필수
+# 기본 프로바이더는 Cerebras입니다. CEREBRAS_API_KEY를 설정하세요.
+# 프로덕션 기본 모델: gpt-oss-120b (Deep/Quick 공통)
 
 # 실행 (샘플 JSON 모드)
 python main.py --project quantum_computing
+
+# 짧은 컨텍스트·저비용 검증 프로필
+python main.py --project quantum_computing --profile test-cerebras
 
 # 실행 (기획보고서 원문 모드 — .md/.txt, HWP는 md로 변환 후 투입)
 python main.py --report "내사업_기획보고서.md"
@@ -52,7 +56,8 @@ python main.py --project bio_health --debug
 
 ## 산출물
 
-실행이 끝나면 `~/.rdagents/logs/{사업ID}/{타임스탬프}/`에 심의 전 과정이 저장됩니다.
+실행이 끝나면 프로젝트 내부 `results/{사업ID}/{실행ID}/`에 심의 전 과정이 저장됩니다.
+`RDAGENTS_RESULTS_DIR` 환경변수를 지정하면 외부 저장소로 변경할 수 있습니다.
 
 | 파일 | 내용 |
 |---|---|
@@ -70,6 +75,7 @@ python main.py --project bio_health --debug
 | `10_불확실성_반대근거.md` | 에이전트 불일치·반대 근거·추가 확인 자료 |
 | `11_재심의_전후비교.md` | 이전 지적의 해소·미해소·신규 우려와 결정·예산 변화 |
 | `12_실행관측성.md` | 실행 ID·모델·노드 시간·토큰·비용 계산 상태 |
+| `심의종합리포트.html` | 위 산출물을 목차와 섹션으로 묶은 단일 열람용 HTML 리포트 |
 
 같은 사업을 보완 후 다시 심의하면 이전 심의 요약(`~/.rdagents/memory/review_memory.md`)이
 자동으로 주입되어, 위원장과 최종 승인권자가 지적사항 해소 여부를 확인합니다.
@@ -103,10 +109,10 @@ LangGraph 실행 이력을 기준으로 재개할 수 있습니다. 실행 관�
 python main.py --report "기획보고서.md" --gate 예타
 
 # 2) 예상 질의로 답변 리허설 (대화형 모의 청문 — 답변 평가 + 압박 후속질의)
-python main.py --hearing --run-dir "~/.rdagents/logs/{사업ID}/{실행ID}"
+python main.py --hearing --run-dir "results/{사업ID}/{실행ID}"
 
 # 3) 실제 심의 후: 실제로 받은 질의를 파일로 정리해 적중률 검증
-python main.py --verify-questions "실제질의.md" --run-dir "~/.rdagents/logs/{사업ID}/{실행ID}"
+python main.py --verify-questions "실제질의.md" --run-dir "results/{사업ID}/{실행ID}"
 ```
 
 모의 심의의 공방은 실제 심의장 구조를 따릅니다 — 옹호 위원 없이 **심사위원 패널이 공격하고

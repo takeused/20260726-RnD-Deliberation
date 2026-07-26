@@ -4,3 +4,14 @@ __pycache__/
 .env
 rdagents.egg-info/
 test_planning_report/
+
+# Local execution artifacts and confidential planning materials (never publish)
+results/
+output/
+tmp/
+*.pdf
+presentation*.pdf
+sample_data/(기획보고서)*
+sample_data/NTIS_유사사업.md
+sample_data/정책근거.md
+sample_data/시장조사.txt

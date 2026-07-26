@@ -185,6 +185,18 @@ MODEL_OPTIONS: ProviderModeOptions = {
     "mistral": _CUSTOM_ONLY,
     "kimi": _CUSTOM_ONLY,
     "groq": _CUSTOM_ONLY,
+    "cerebras": {
+        "quick": [
+            ("GPT OSS 120B - Production, fast reasoning + tools", "gpt-oss-120b"),
+            ("Z.ai GLM 4.7 - Preview", "zai-glm-4.7"),
+            ("Custom model ID", "custom"),
+        ],
+        "deep": [
+            ("GPT OSS 120B - Production, structured output + tools", "gpt-oss-120b"),
+            ("Z.ai GLM 4.7 - Preview", "zai-glm-4.7"),
+            ("Custom model ID", "custom"),
+        ],
+    },
     "nvidia": _CUSTOM_ONLY,
     # Bedrock model IDs / cross-region inference profile IDs are user-specified.
     "bedrock": _CUSTOM_ONLY,

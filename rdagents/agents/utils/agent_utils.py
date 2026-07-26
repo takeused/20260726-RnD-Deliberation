@@ -32,10 +32,18 @@ def clip_text(text: str, state: dict, fraction: float = 1.0) -> str:
 
 
 def get_language_instruction(language: str = "Korean") -> str:
-    """출력 언어 지시문 반환."""
+    """출력 언어와 모든 에이전트에 공통인 근거 규칙을 반환."""
+    grounding = (
+        "\n\n## 근거 사용 원칙\n"
+        "- 도구 결과, 입력 보고서, 외부근거, 앞 단계 심의 산출물에 실제로 포함된 정보만 사실로 단정하세요.\n"
+        "- 제공되지 않은 통계·시장규모·투자액·기관명·문서명·인용문·날짜·협약·사례를 만들어내지 마세요.\n"
+        "- 사업보고서의 주장은 '사업보고서 주장', 독립 외부자료로 확인된 내용은 '외부근거 확인'으로 구분하세요.\n"
+        "- 필요한 근거가 없으면 추정값으로 채우지 말고 '[확인 필요: 필요한 자료]'라고 표시하세요.\n"
+        "- 미래 제출일·과거 실적·정책 시행일은 입력 근거가 있을 때만 구체적인 날짜로 쓰세요."
+    )
     if language.lower() == "korean":
-        return "\n\n**중요: 모든 분석 보고서와 의견은 반드시 한국어로 작성해 주세요.**"
-    return ""
+        return grounding + "\n\n**중요: 모든 분석 보고서와 의견은 반드시 한국어로 작성해 주세요.**"
+    return grounding
 
 
 def get_project_context_from_state(state: dict) -> str:
