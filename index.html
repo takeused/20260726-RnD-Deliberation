@@ -91,6 +91,8 @@
     .report-open { min-height: 48px; padding: 10px 17px; border: 0; border-radius: 8px; color: #fff; background: var(--navy); font: inherit; font-weight: 800; cursor: pointer; }
     .report-open:hover { background: #0d506f; }
     .report-open:focus-visible, .report-picker select:focus-visible { outline: 3px solid #63a7cc; outline-offset: 2px; }
+    .report-direct { display: inline-flex; align-items: center; min-height: 48px; padding: 10px 15px; border: 1px solid #9ab7bd; border-radius: 8px; color: var(--navy); background: #fff; font-weight: 800; text-decoration: none; white-space: nowrap; }
+    .report-direct:hover { background: #eef8f7; }
     .report-frame { width: 100%; height: 820px; margin-top: 22px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
     .report-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
     footer { padding: 28px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
@@ -108,7 +110,7 @@
     </div>
   </header>
 
-  <nav class="nav" aria-label="페이지 목차"><div class="shell nav-inner"><a href="#purpose">목적</a><a href="#policy-link">정책 연계</a><a href="#process">처리절차</a><a href="#method">방법론</a><a href="#committee">위원회 구성</a><a href="#logic">구성 로직</a><a href="#criteria">심의 분야</a><a href="#outputs">산출물</a><a href="#report-access">보호된 결과 보고서</a></div></nav>
+  <nav class="nav" aria-label="페이지 목차"><div class="shell nav-inner"><a href="#purpose">목적</a><a href="#policy-link">정책 연계</a><a href="#process">처리절차</a><a href="#method">방법론</a><a href="#committee">위원회 구성</a><a href="#expert-model">전문가 모델링</a><a href="#logic">구성 로직</a><a href="#criteria">심의 분야</a><a href="#outputs">산출물</a><a href="#report-access">보호된 결과 보고서</a></div></nav>
 
   <main class="shell">
     <section id="purpose">
@@ -167,6 +169,17 @@
       </div>
     </section>
 
+    <section id="expert-model">
+      <div class="section-heading"><h2>전문가를 어떻게 모델링하는가</h2><p>이 프로젝트의 심의위원은 실제 인간 전문가를 복제한 사람이 아니라, 특정 전문 관점과 업무 절차를 반복 실행하는 AI 역할 모듈입니다.</p></div>
+      <div class="grid grid-2">
+        <article class="card"><h3>역할 모듈의 구성</h3><p>각 전문가는 역할 목적, 검토 분야, 사용할 자료·도구, 핵심 질문, 출력 형식, 다른 위원과 충돌할 때의 처리 방식을 갖습니다. 그래서 이름만 다른 페르소나가 아니라 서로 다른 판단 경로를 가진 분석 모듈로 작동합니다.</p></article>
+        <article class="card"><h3>심의가 진행되는 방식</h3><p>자료를 읽고 기준을 적용한 뒤 질문·반론·종합 판단을 수행합니다. 6개 전문 분석가의 결과가 심사위원 패널, 발표자, 위원장, 예산 조정관, 재정 감사 패널, 최종 승인권자로 순차 전달됩니다.</p></article>
+        <article class="card"><h3>인간 전문가와의 차이</h3><p>현장 경험, 비공개 정보, 조직 내 신뢰와 조정 능력, 결과에 대한 법적·윤리적 책임까지 갖춘 실제 전문가와는 다릅니다. 출력은 사전 검토와 질문 대비를 위한 참고자료이며 최종 판단은 사람이 해야 합니다.</p></article>
+        <article class="card"><h3>다른 전문가로 확장하는 방법</h3><p>새 역할의 목적·자료·도구·질문·출력·검증 기준을 정의하면 법률 검토자, 투자심사역, 의료·환경·보안 전문가 등으로 확장할 수 있습니다. 다만 역할을 추가할수록 근거자료, 검증규칙, 비용과 품질관리도 함께 설계해야 합니다.</p></article>
+      </div>
+      <p class="callout" style="margin:18px 0 0"><strong>핵심 이해:</strong> 이 시스템은 세상의 모든 인간 기능을 그대로 복제하는 것이 아니라, 전문가 업무 중 “자료 읽기 → 기준 적용 → 질문하기 → 반론하기 → 판단 근거 정리하기”를 구조화해 반복 실행합니다. 따라서 전문가를 대체하는 시스템보다 전문가의 사전 검토를 보조하는 심의 리허설 시스템으로 이해하는 것이 정확합니다.</p>
+    </section>
+
     <section id="logic">
       <div class="section-heading"><h2>심의위원 구성 로직</h2><p>위원을 임의로 늘리는 방식이 아니라, 사업 심의에서 필요한 판단 공백을 역할로 분해해 조합합니다.</p></div>
       <div class="logic">
@@ -211,10 +224,11 @@
         <div class="report-controls">
           <div class="report-picker"><label for="report-select">열람할 결과 보고서</label><select id="report-select">
             <option value="">보고서를 선택하세요</option>
-            <option value="results/index.html">기관고유 연구성과 실용전환촉인</option>
+            <option value="results/index.html">기관고유 연구성과 실용전환촉진 기획연구</option>
             <option value="results/regional-disaster-safety-phase2/20260727_132031_197760-ee12378a/심의종합리포트.html">지역맞춤형 재난안전 문제해결 기술개발(2단계) · 2024년 심의</option>
           </select></div>
           <button class="report-open" id="report-open" type="button">선택한 결과 열기</button>
+          <a class="report-direct" id="report-direct" href="#" target="_blank" rel="noopener noreferrer" hidden>새 탭에서 보기 ↗</a>
         </div>
         <p class="report-note">기존 배포본은 암호 입력 화면이 표시됩니다. 이번 실행 결과는 로컬 작업공간의 통합 HTML 보고서입니다.</p>
         <iframe class="report-frame" id="report-frame" title="선택한 심의 결과 보고서" hidden></iframe>
@@ -225,13 +239,17 @@
   <script>
     const reportSelect = document.querySelector('#report-select');
     const reportOpen = document.querySelector('#report-open');
+    const reportDirect = document.querySelector('#report-direct');
     const reportFrame = document.querySelector('#report-frame');
     reportOpen.addEventListener('click', () => {
       if (!reportSelect.value) {
         reportSelect.focus();
         return;
       }
-      reportFrame.src = reportSelect.value;
+      const reportUrl = new URL(reportSelect.value, document.baseURI).href;
+      reportFrame.src = reportUrl;
+      reportDirect.href = reportUrl;
+      reportDirect.hidden = false;
       reportFrame.hidden = false;
       reportFrame.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
