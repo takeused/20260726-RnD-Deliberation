@@ -486,7 +486,7 @@ QUALITY_WEIGHTS: dict[str, tuple[str, float]] = {
     "technology_importance": ("기술개발 중요성", 0.20),
     "urgency": ("시급성", 0.15),
     "technical_feasibility": ("기술적 실현 가능성", 0.15),
-    "economic_feasibility": ("경제·재무 타당성", 0.15),
+    "economic_feasibility": ("경제·공공가치 타당성", 0.15),
     "execution_capability": ("수행 역량", 0.10),
 }
 

@@ -193,6 +193,16 @@ def test_common_prompt_forbids_fabricated_evidence():
     assert "사업보고서 주장" in instruction and "외부근거 확인" in instruction
 
 
+def test_review_criteria_adapts_to_public_safety_projects():
+    from rdagents.agents.utils.review_criteria import get_review_criteria
+
+    criteria = get_review_criteria()
+    assert "공공임무·사회문제 해결형" in criteria
+    assert "인명·재산 피해 저감" in criteria
+    assert "지역 안전격차" in criteria
+    assert "억지 B/C" in criteria
+
+
 def test_protected_report_keeps_internal_navigation_unlocked():
     """암호 해제 후 목차 링크가 상위 잠금 페이지를 다시 탐색하지 않아야 한다."""
     generator = (
