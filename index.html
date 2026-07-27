@@ -110,7 +110,7 @@
     </div>
   </header>
 
-  <nav class="nav" aria-label="페이지 목차"><div class="shell nav-inner"><a href="#purpose">목적</a><a href="#policy-link">정책 연계</a><a href="#process">처리절차</a><a href="#method">방법론</a><a href="#committee">위원회 구성</a><a href="#expert-model">전문가 모델링</a><a href="#logic">구성 로직</a><a href="#criteria">심의 분야</a><a href="#outputs">산출물</a><a href="#report-access">보호된 결과 보고서</a></div></nav>
+  <nav class="nav" aria-label="페이지 목차"><div class="shell nav-inner"><a href="#purpose">목적</a><a href="#policy-link">정책 연계</a><a href="#process">처리절차</a><a href="#method">방법론</a><a href="#committee">위원회 구성</a><a href="#expert-model">전문가 모델링</a><a href="#logic">구성 로직</a><a href="#criteria">심의 분야</a><a href="#outputs">산출물</a><a href="#llm-comparison">LLM 품질 비교</a><a href="#report-access">보호된 결과 보고서</a></div></nav>
 
   <main class="shell">
     <section id="purpose">
@@ -215,6 +215,16 @@
       <div class="output">
         <div class="card"><h3>주요 산출물</h3><ul><li>6개 관점의 전문 분석 보고서</li><li>심사위원 패널과 발표자의 공방 전문</li><li>위원장 의견·예산 조정안·최종 결정</li><li>재정 감사의 정량평가표·불확실성 보고서</li><li>예상 질의·권장 답변 초안·보완 권고</li><li>독립 품질평가 및 재심의 비교 결과</li></ul></div>
         <div class="card"><h3>다음 실행 모드</h3><ul><li><code>--profile test-cerebras</code>로 API 기반 테스트</li><li><code>--gate 예타</code> 등 관문별 심의 리허설</li><li><code>--hearing</code>으로 예상 질의 모의 청문</li><li><code>--verify-questions</code>로 실제 질문 적중 검증</li><li><code>--execution-id</code>로 중단된 실행 이어가기</li></ul></div>
+      </div>
+    </section>
+
+    <section id="llm-comparison">
+      <div class="section-heading"><h2>LLM 심의 시뮬레이션 품질 비교</h2><p>동일한 기관고유 연구성과 실용전환촉진 기획보고서를 Cerebras와 Gemma4:e4b로 비교하는 영역입니다.</p></div>
+      <div class="card" style="border-color:#e0bd72;background:linear-gradient(120deg,#fffaf0,#fff)">
+        <h3>현재 비교 상태: Gemma4:e4b 실행 환경 확인 필요</h3>
+        <p>Cerebras 시뮬레이션은 완료되어 <strong>조건부승인·141.6억 원</strong> 결과를 만들었습니다. Gemma4:e4b는 현재 Ollama 실행 파일과 기본 포트 11434 리스너가 확인되지 않아 실제 심의 결과가 생성되지 않았습니다.</p>
+        <p>따라서 현재는 모델 우열을 판정하지 않고, 실행 완료율·구조화 출력 유효성·근거 연결성·최종결정 일관성·공공가치 기준 반영도를 동일 조건으로 비교하도록 대기 중입니다.</p>
+        <p><a class="report-direct" href="results/llm-quality-comparison/institutional-outcomes-civil-convergence-2027/LLM_품질비교리포트.html" target="_blank" rel="noopener noreferrer">암호화 비교 상태 리포트 열기 ↗</a></p>
       </div>
     </section>
 
