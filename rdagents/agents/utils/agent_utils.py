@@ -33,13 +33,33 @@ TOOL_LIMIT_NOTE = (
 
 
 def bind_analyst_tools(llm, tools: list, state: dict):
-    """(바인딩된 모델, 보낼 메시지). 도구 호출이 상한에 이르면 도구를 못 부르게 하고 보고서 작성을 지시한다."""
+    """(바인딩된 모델, 보낼 메시지). 도구 호출이 상한에 이르면 도구 없이 보고서 작성을 지시한다.
+
+    상한 뒤에는 tool_choice="none" 대신 도구를 아예 빼고, 도구 호출·결과를 글로 펼쳐 넘긴다.
+    Groq gpt-oss는 tool_choice="none"이어도 도구를 부르려다 400(tool_use_failed)을 낼 수 있고,
+    그러면 같은 체크포인트로 다시 실행해도 같은 자리에서 멈춘다.
+    """
     messages = fit_tool_messages(state["messages"], state)
     cap = _setting(state, "max_analyst_tool_calls", "RDAGENTS_MAX_ANALYST_TOOL_CALLS")
     used = sum(isinstance(m, ToolMessage) for m in state["messages"])
     if cap and used >= cap:
-        return llm.bind_tools(tools, tool_choice="none"), [*messages, HumanMessage(content=TOOL_LIMIT_NOTE)]
+        return llm, [*_tool_exchange_as_text(messages), HumanMessage(content=TOOL_LIMIT_NOTE)]
     return llm.bind_tools(tools), messages
+
+
+def _tool_exchange_as_text(messages: list) -> list:
+    """도구 호출(AIMessage.tool_calls)과 결과(ToolMessage)를 일반 대화 메시지로 바꾼다 (도구 정의 없이 보내기 위해)."""
+    out = []
+    for m in messages:
+        if isinstance(m, ToolMessage):
+            text = m.content if isinstance(m.content, str) else str(m.content)
+            out.append(HumanMessage(content=f"[도구 결과: {m.name or '도구'}]\n{text}"))
+        elif isinstance(m, AIMessage) and m.tool_calls:
+            calls = ", ".join(f"{c['name']}({c.get('args', {})})" for c in m.tool_calls)
+            out.append(AIMessage(content=f"{m.content or ''}\n[도구 호출: {calls}]".strip()))
+        else:
+            out.append(m)
+    return out
 
 
 def fit_tool_messages(messages: list, state: dict, min_keep: int = 300) -> list:

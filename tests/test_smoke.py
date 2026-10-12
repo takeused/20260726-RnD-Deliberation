@@ -552,29 +552,35 @@ def test_tool_results_fit_budget_without_touching_state():
     assert sum(len(m.content) for m in fitted[1:]) < 2005 * 4 * 0.6
 
 def test_analyst_tool_call_cap(monkeypatch):
-    """도구 결과가 상한에 이르면 도구를 못 부르게(tool_choice=none) 하고 보고서 작성을 지시한다.
+    """도구 결과가 상한에 이르면 도구 없이(바인딩 안 함) 보고서 작성을 지시한다. 도구 호출·결과는 글로 펼친다.
     상태에 값이 없으면(설정 추가 전 체크포인트) 환경변수를 읽는다."""
-    from langchain_core.messages import HumanMessage, ToolMessage
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
     from rdagents.agents.utils.agent_utils import TOOL_LIMIT_NOTE, bind_analyst_tools
 
     class Recorder:
         def bind_tools(self, tools, **kwargs):
-            return kwargs
+            return ("bound", kwargs)
 
-    two = [HumanMessage(content="시작")] + [ToolMessage(content="결과", tool_call_id=f"t{i}") for i in range(2)]
-    three = two + [ToolMessage(content="결과", tool_call_id="t2")]
+    llm = Recorder()
+    call = AIMessage(content="", tool_calls=[{"name": "search_report", "args": {"query": "예산"}, "id": "t0"}])
+    two = [HumanMessage(content="시작"), call] + [
+        ToolMessage(content="결과", tool_call_id=f"t{i}", name="search_report") for i in range(2)
+    ]
+    three = two + [ToolMessage(content="결과", tool_call_id="t2", name="search_report")]
 
-    kwargs, msgs = bind_analyst_tools(Recorder(), [], {"messages": two, "max_analyst_tool_calls": 3})
-    assert kwargs == {} and msgs[-1].content == "결과"                     # 아직 상한 전
-    kwargs, msgs = bind_analyst_tools(Recorder(), [], {"messages": three, "max_analyst_tool_calls": 3})
-    assert kwargs == {"tool_choice": "none"} and msgs[-1].content == TOOL_LIMIT_NOTE
-    kwargs, _ = bind_analyst_tools(Recorder(), [], {"messages": three, "max_analyst_tool_calls": 0})
-    assert kwargs == {}                                                     # 0이면 무제한
+    model, msgs = bind_analyst_tools(llm, [], {"messages": two, "max_analyst_tool_calls": 3})
+    assert model == ("bound", {}) and msgs[-1].content == "결과"            # 아직 상한 전
+    model, msgs = bind_analyst_tools(llm, [], {"messages": three, "max_analyst_tool_calls": 3})
+    assert model is llm and msgs[-1].content == TOOL_LIMIT_NOTE             # 도구 없이 호출
+    assert not any(isinstance(m, ToolMessage) or getattr(m, "tool_calls", None) for m in msgs)
+    assert "[도구 결과: search_report]" in msgs[2].content and "search_report" in msgs[1].content
+    model, _ = bind_analyst_tools(llm, [], {"messages": three, "max_analyst_tool_calls": 0})
+    assert model == ("bound", {})                                           # 0이면 무제한
 
     monkeypatch.setenv("RDAGENTS_MAX_ANALYST_TOOL_CALLS", "3")
-    kwargs, _ = bind_analyst_tools(Recorder(), [], {"messages": three})     # 상태에 값 없음 -> 환경변수
-    assert kwargs == {"tool_choice": "none"}
+    model, _ = bind_analyst_tools(llm, [], {"messages": three})             # 상태에 값 없음 -> 환경변수
+    assert model is llm
 
 def test_explicit_env_beats_profile(monkeypatch):
     """프로파일보다 사용자가 직접 준 RDAGENTS_* 환경변수가 우선 (요청 초과 안내대로 조각만 줄여 재실행 가능)."""
