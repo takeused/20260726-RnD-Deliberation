@@ -479,6 +479,66 @@ def run_report_mode_and_memory():
     print("=== 원문 모드 + 재심의 메모리 테스트 통과 ===")
 
 
+GROQ_TPD_MESSAGE = (
+    "Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization "
+    "`org_x` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 194723, Requested 6678. "
+    "Please try again in 10m5.232s.', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+)
+
+
+def test_daily_quota_detection():
+    from rdagents.llm_clients.quota import DailyQuotaExceeded, as_daily_quota
+
+    daily = as_daily_quota(RuntimeError(GROQ_TPD_MESSAGE))
+    assert isinstance(daily, DailyQuotaExceeded) and daily.retry_after == "10m5.232s"
+    per_minute = GROQ_TPD_MESSAGE.replace("tokens per day (TPD)", "tokens per minute (TPM)")
+    assert as_daily_quota(RuntimeError(per_minute)) is None      # 분당 한도는 기존처럼 재시도
+    assert as_daily_quota(ValueError("schema validation failed")) is None
+
+
+def test_daily_quota_stops_retries_immediately(monkeypatch):
+    """하루 한도면 클라이언트 재시도(3초·6초)와 구조화 출력 재시도를 하지 않고 바로 올린다."""
+    import httpx
+    import pytest
+    from langchain_openai import ChatOpenAI
+    from openai import RateLimitError
+
+    from rdagents.agents.schemas import ReviewPlan
+    from rdagents.agents.utils.structured import invoke_structured_model
+    from rdagents.llm_clients.openai_client import NormalizedChatOpenAI
+    from rdagents.llm_clients.quota import DailyQuotaExceeded
+
+    calls = {"n": 0}
+    response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"))
+
+    def always_daily_limit(self, *args, **kwargs):
+        calls["n"] += 1
+        raise RateLimitError(GROQ_TPD_MESSAGE, response=response, body=None)
+
+    monkeypatch.setattr(ChatOpenAI, "invoke", always_daily_limit)
+    monkeypatch.setattr("time.sleep", lambda s: pytest.fail("하루 한도인데 재시도 대기함"))
+    llm = NormalizedChatOpenAI(model="openai/gpt-oss-120b", api_key="test", base_url="https://api.groq.com/openai/v1")
+    with pytest.raises(DailyQuotaExceeded):
+        llm.invoke("hi")
+    assert calls["n"] == 1
+
+    class Raising:
+        def __init__(self):
+            self.n = 0
+
+        def with_structured_output(self, schema, include_raw=False):
+            return self
+
+        def invoke(self, _messages):
+            self.n += 1
+            raise DailyQuotaExceeded(GROQ_TPD_MESSAGE, "10m")
+
+    fake = Raising()
+    with pytest.raises(DailyQuotaExceeded):
+        invoke_structured_model(fake, ReviewPlan, "prompt", "Review Manager")
+    assert fake.n == 1  # 구조화 출력 재시도(최대 3회)도 하지 않음
+
+
 def test_plan_precheck_rules():
     from rdagents.dataflows.plan_precheck import check_lines, precheck_brief, run_precheck
 

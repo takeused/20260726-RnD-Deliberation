@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
 from .capabilities import get_capabilities
+from .quota import as_daily_quota
 from .validators import validate_model
 
 
@@ -44,6 +45,8 @@ class NormalizedChatOpenAI(ChatOpenAI):
             try:
                 return normalize_content(super().invoke(input, config, **kwargs))
             except RateLimitError as e:
+                if daily := as_daily_quota(e):
+                    raise daily from e  # 하루 한도는 몇 초 기다려도 안 풀림 -> 재시도하지 않음
                 if attempt == max_retries - 1:
                     raise e
                 logging.getLogger(__name__).warning(

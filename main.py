@@ -16,6 +16,7 @@ except ImportError:  # 선택 의존성: 없으면 기본 인증서 묶음 사�
 
 from rdagents.graph.review_graph import RDReviewGraph
 from rdagents.llm_clients.api_key_env import get_api_key_env
+from rdagents.llm_clients.quota import DailyQuotaExceeded
 
 
 _KEY_OPTIONAL_PROVIDERS = {"bedrock", "ollama", "openai_compatible"}
@@ -245,6 +246,20 @@ def main():
             print("- 12_실행관측성.md : 모델·노드 시간·토큰·비용 상태")
             print("- 심의종합리포트.html : 전체 결과 통합 열람용 리포트")
             
+    except DailyQuotaExceeded as e:
+        # 하루 한도는 재시도로 풀리지 않는다: 멈추고 이어서 실행하는 방법을 안내
+        wait = f"약 {e.retry_after} 뒤" if e.retry_after else "한도가 풀린 뒤"
+        print(f"\n[하루 사용량 한도 초과] {provider} 공급자의 하루 한도에 걸려 심의를 멈췄습니다.", file=sys.stderr)
+        if args.execution_id and graph.config.get("checkpoint_enabled"):
+            print(f"{wait} 같은 명령(--execution-id {args.execution_id})으로 다시 실행하면 "
+                  "끝난 단계는 건너뛰고 이어서 진행합니다.", file=sys.stderr)
+        else:
+            print(f"{wait} 다시 실행하세요. 이어서 실행하려면 RDAGENTS_CHECKPOINT_ENABLED=true와 "
+                  "--execution-id를 지정해야 합니다 (지금은 처음부터 다시 실행됨).", file=sys.stderr)
+        print("안내된 대기 시간은 '다음 요청 하나'가 들어갈 자리가 생기는 시간입니다. 남은 심의 전체가 끝나려면 "
+              "더 오래 기다려야 할 수 있습니다 (Groq 무료: 하루 20만 토큰, 심의 1회 약 11만 토큰).", file=sys.stderr)
+        print(f"공급자 메시지: {e}", file=sys.stderr)
+        return 3
     except Exception as e:
         print(f"\n[오류 발생]: {e}", file=sys.stderr)
         return 1
