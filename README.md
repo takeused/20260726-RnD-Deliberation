@@ -28,14 +28,15 @@ pip install -e .
 
 # 환경 변수 설정
 # .env.example을 .env로 복사하고 API 키를 입력하세요.
-# 기본 프로바이더는 Cerebras입니다. CEREBRAS_API_KEY를 설정하세요.
-# 프로덕션 기본 모델: gpt-oss-120b (Deep/Quick 공통)
+# 기본 프로바이더는 Groq입니다. GROQ_API_KEY를 설정하세요. (Cerebras는 정책 변경으로 지원 중단)
+# 기본 모델: openai/gpt-oss-120b (Deep/Quick 공통)
 
 # 실행 (샘플 JSON 모드)
 python main.py --project quantum_computing
 
-# 짧은 컨텍스트·저비용 검증 프로필
-python main.py --project quantum_computing --profile test-cerebras
+# 짧은 컨텍스트·저비용 검증 프로필: Groq 무료 등급 (.env에 GROQ_API_KEY). 분당 8,000토큰·하루 20만 토큰이라 심의 1회(약 11만 토큰)는 하루 한도가 넉넉할 때
+# Groq gpt-oss는 구조화 출력을 json_schema 방식으로 요청합니다 (도구 호출 방식은 tool_use_failed가 잦음)
+python main.py --project quantum_computing --profile test-groq
 
 # 실행 (기획보고서 원문 모드 — .md/.txt, HWP는 md로 변환 후 투입)
 python main.py --report "내사업_기획보고서.md"

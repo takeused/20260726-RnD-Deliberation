@@ -86,7 +86,7 @@ class RDReviewGraph:
             "openai": ("reasoning_effort", self.config["openai_reasoning_effort"]),
             "azure": ("reasoning_effort", self.config["openai_reasoning_effort"]),
             "anthropic": ("effort", self.config["anthropic_effort"]),
-            "cerebras": ("reasoning_effort", self.config["openai_reasoning_effort"]),
+            "groq": ("reasoning_effort", self.config["openai_reasoning_effort"]),
         }
         if provider in effort_map:
             key, value = effort_map[provider]

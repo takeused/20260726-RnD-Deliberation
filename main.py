@@ -5,19 +5,28 @@ import sys
 
 from dotenv import load_dotenv
 
+try:
+    # 회사 프록시처럼 TLS를 가로채는 환경에서는 Python 기본 인증서 묶음이 프록시 인증서를 몰라
+    # LLM API 호출이 "Connection error"로 실패한다. 운영체제 인증서 저장소를 쓰게 한다.
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:  # 선택 의존성: 없으면 기본 인증서 묶음 사용
+    pass
+
 from rdagents.graph.review_graph import RDReviewGraph
 from rdagents.llm_clients.api_key_env import get_api_key_env
 
 
 _KEY_OPTIONAL_PROVIDERS = {"bedrock", "ollama", "openai_compatible"}
 
-# 실행 프로파일: 테스트는 저비용(Cerebras/로컬), 실전은 Gemini
+# 실행 프로파일: 테스트는 저비용(Groq/로컬), 실전은 Gemini
 PROFILES = {
-    "test-cerebras": {
-        "llm_provider": "cerebras",
-        "deep_think_llm": "gpt-oss-120b",
-        "quick_think_llm": "gpt-oss-120b",
-        # 무료 티어 컨텍스트 8K 토큰 제한 대응
+    # Groq 무료 등급은 분당 8,000토큰이라 요청 하나가 그보다 크면 거절된다 -> 짧은 문맥 예산
+    "test-groq": {
+        "llm_provider": "groq",
+        "deep_think_llm": "openai/gpt-oss-120b",
+        "quick_think_llm": "openai/gpt-oss-120b",
         "prompt_char_budget": 1200,
         "report_chunk_chars": 1500,
         "report_retrieval_top_k": 2,
@@ -84,7 +93,7 @@ def main():
         "--profile",
         choices=sorted(PROFILES),
         default=None,
-        help="실행 프로파일: test-cerebras(Cerebras API), test-local(Ollama gemma4:e4b), "
+        help="실행 프로파일: test-groq(Groq API), test-local(Ollama gemma4:e4b), "
              "prod(Gemini 3.1 Flash). 미지정 시 .env/기본 설정 사용.",
     )
     parser.add_argument(
@@ -135,7 +144,7 @@ def main():
 
     provider = (
         overrides["llm_provider"] if overrides and "llm_provider" in overrides
-        else os.getenv("RDAGENTS_LLM_PROVIDER", "cerebras")
+        else os.getenv("RDAGENTS_LLM_PROVIDER", "groq")
     )
     auth_error = _validate_provider_auth(provider)
     if auth_error:

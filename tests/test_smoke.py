@@ -206,6 +206,19 @@ def test_report_identity_and_memory_limits(tmp_path):
     assert "우려 4" not in limited
 
 
+def test_groq_profile_uses_short_context_and_json_schema():
+    """Groq 무료 등급용 프로필: 짧은 문맥 예산 + 구조화 출력은 json_schema (tool_use_failed 회피)."""
+    import main
+    from rdagents.llm_clients.capabilities import get_capabilities
+
+    profile = main.PROFILES["test-groq"]
+    assert profile["llm_provider"] == "groq"
+    assert profile["prompt_char_budget"] == 1200
+    assert get_capabilities(profile["deep_think_llm"]).preferred_structured_method == "json_schema"
+    assert "test-cerebras" not in main.PROFILES  # Cerebras는 정책 변경으로 쓰지 않음
+    assert main._validate_provider_auth("groq") in (None, "groq 프로바이더에 필요한 GROQ_API_KEY가 설정되어 있지 않습니다.")
+
+
 def test_quality_score_is_weighted_in_code():
     from rdagents.agents.schemas import DecisionQualityReport, ScoreItem
 

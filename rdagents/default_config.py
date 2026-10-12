@@ -94,9 +94,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
         os.path.join(os.path.dirname(__file__), "..", "sample_data"),
     ),
     # LLM 설정
-    "llm_provider": "cerebras",
-    "deep_think_llm": "gpt-oss-120b",
-    "quick_think_llm": "gpt-oss-120b",
+    "llm_provider": "groq",
+    "deep_think_llm": "openai/gpt-oss-120b",
+    "quick_think_llm": "openai/gpt-oss-120b",
     "backend_url": None,
     # 프로바이더별 사고 수준 설정
     "google_thinking_level": None,

@@ -19,7 +19,7 @@ def make_ai_message(content: str, name: str, usage: dict | None = None) -> AIMes
 def clip_text(text: str, state: dict, fraction: float = 1.0) -> str:
     """상태의 prompt_char_budget(0=무제한)에 맞춰 긴 입력을 앞뒤 보존하며 중략.
 
-    Cerebras 무료 티어(8K 토큰)나 로컬 소형 모델처럼 컨텍스트가 작은 백엔드에서
+    Groq 무료 등급(분당 8,000토큰)이나 로컬 소형 모델처럼 컨텍스트가 작은 백엔드에서
     긴 심의 이력이 컨텍스트 초과로 실행을 중단시키는 것을 막는다.
     fraction: 입력 섹션이 많은 노드는 섹션당 예산을 줄이기 위해 1 미만을 지정.
     """
