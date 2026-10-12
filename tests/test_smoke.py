@@ -64,7 +64,7 @@ def _default_instance(schema):
 
         values["questions"] = [
             q(CriterionTag.GOV_SUPPORT), q(CriterionTag.IMPORTANCE),
-            q(CriterionTag.URGENCY), q(CriterionTag.OTHER), q(CriterionTag.GOV_SUPPORT),
+            q(CriterionTag.URGENCY), q(CriterionTag.BUDGET), q(CriterionTag.OTHER),
         ]
         values["improvements"] = [
             ImprovementItem(weakness="[가짜 취약점]", severity=Severity.MEDIUM,
@@ -135,6 +135,44 @@ def test_verified_budget_facts_anchor_budget_and_final_decision(tmp_path):
     )
     with pytest.raises(ValueError, match="검증 예산안"):
         align_final_decision_to_budget(decision, 226.0)
+
+
+def test_citation_content_check_flags_wrong_line(tmp_path):
+    """범위는 유효하지만 인용 줄에 없는 수치·무관한 내용을 확인 권고로 올리고, 검증 상태는 바꾸지 않는다."""
+    from rdagents.dataflows.output_validation import build_validation_report, check_citation_content
+    from rdagents.dataflows.project_loader import set_current_report
+
+    line = "- 총 사업비: 226억 원 (1차년도 60억)"
+    assert check_citation_content("총사업비 226억원 [출처: a.md L1-L1]", line) == []       # 단위 표기 차이 허용
+    assert check_citation_content("총사업비 300억 원 [출처: a.md L1-L1]", line) == ["인용 줄에 없는 수치 300억"]
+    assert check_citation_content("민간 투자 유인이 부족하다 [출처: a.md L1-L1]", line) == [
+        "문장과 인용 줄이 공유하는 단어가 없음"]
+
+    report = tmp_path / "대조.md"
+    report.write_text("사업규모: 22,600백만원(2027~2031)\n민간 투자 유인이 부족하다.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="content-check")
+    text = build_validation_report({
+        "01a.md": "민간 투자 유인이 부족하다 [출처: 대조.md L2-L2]\n"      # 맞는 인용
+                  "민간 투자 유인이 부족하다 [출처: 대조.md L1-L1]\n",     # 범위는 유효, 줄은 엉뚱함
+    })
+    assert "**검증 상태**: 통과" in text                   # 경험적 검사라 상태는 그대로
+    assert "**출처 내용 대조 확인 권고 수**: 1" in text
+    assert "`01a.md` L2 → `대조.md` L1-L1" in text
+
+
+def test_preparation_report_requires_budget_question():
+    """예상 질의에 예산 타당성 질의가 없으면 3대 기준과 똑같이 검증 오류(-> 구조화 재시도)."""
+    import pytest
+
+    from rdagents.agents.schemas import CriterionTag, ReviewPreparationReport
+
+    complete = _default_instance(ReviewPreparationReport)
+    assert CriterionTag.BUDGET in {q.criterion for q in complete.questions}
+    values = complete.model_dump()
+    values["questions"] = [q for q in values["questions"] if q["criterion"] != CriterionTag.BUDGET]
+    values["questions"].append({**values["questions"][0], "criterion": CriterionTag.OTHER})
+    with pytest.raises(ValueError, match="예산 타당성"):
+        ReviewPreparationReport(**values)
 
 
 def test_report_identity_and_memory_limits(tmp_path):

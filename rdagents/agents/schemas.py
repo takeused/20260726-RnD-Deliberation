@@ -247,6 +247,7 @@ class CriterionTag(str, Enum):
     GOV_SUPPORT = "정부지원 필요성"
     IMPORTANCE = "기술개발의 중요성"
     URGENCY = "시급성"
+    BUDGET = "예산 타당성"  # 예산 규모·비목 산출 근거. 3대 기준이 아니어도 감액 결론을 바꾸므로 별도 보장
     OTHER = "기타"
 
 
@@ -262,7 +263,10 @@ class AnticipatedQuestion(BaseModel):
 
     question: str = Field(description="심의위원이 실제로 던질 법한 구체적 질의문.")
     criterion: CriterionTag = Field(
-        description="질의가 겨냥하는 심의기준. 정부지원 필요성 / 기술개발의 중요성 / 시급성 / 기타.",
+        description=(
+            "질의가 겨냥하는 심의기준. 정부지원 필요성 / 기술개발의 중요성 / 시급성 / "
+            "예산 타당성(예산 규모·비목·단가 산출 근거) / 기타."
+        ),
     )
     severity: Severity = Field(
         description="답변 실패 시 심의 결과에 미칠 타격 정도. 상 / 중 / 하.",
@@ -303,9 +307,14 @@ class ReviewPreparationReport(BaseModel):
 
     @model_validator(mode="after")
     def validate_core_criteria_coverage(self):
-        """3대 최우선 심의기준을 겨냥한 질의가 각각 최소 1건 있는지 검증."""
+        """3대 최우선 심의기준과 예산 타당성을 겨냥한 질의가 각각 최소 1건 있는지 검증.
+
+        예산 타당성을 따로 요구하는 이유: 3대 기준만 요구하면 예산 산출 근거를 묻는 질의가 하나도 없어도
+        통과한다. 학습 저장소의 모의 심의에서 예산 지적이 공방에서 빠지면 감액 결론이 사라지는 것을 확인했다.
+        """
         covered = {q.criterion for q in self.questions}
-        required = {CriterionTag.GOV_SUPPORT, CriterionTag.IMPORTANCE, CriterionTag.URGENCY}
+        required = {CriterionTag.GOV_SUPPORT, CriterionTag.IMPORTANCE, CriterionTag.URGENCY,
+                    CriterionTag.BUDGET}
         missing = required - covered
         if missing:
             raise ValueError(
