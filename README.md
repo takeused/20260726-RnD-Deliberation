@@ -36,6 +36,8 @@ python main.py --project quantum_computing
 
 # 짧은 컨텍스트·저비용 검증 프로필: Groq 무료 등급 (.env에 GROQ_API_KEY). 분당 8,000토큰·하루 20만 토큰이라 심의 1회(약 11만 토큰)는 하루 한도가 넉넉할 때
 # Groq gpt-oss는 구조화 출력을 json_schema 방식으로 요청합니다 (도구 호출 방식은 tool_use_failed가 잦음)
+# 분당 8,000토큰에 맞춰 분석가가 보내는 도구 결과를 3,500자로 줄이고(RDAGENTS_TOOL_RESULT_CHAR_BUDGET),
+# 분석가 1명의 도구 호출을 3번으로 제한합니다(RDAGENTS_MAX_ANALYST_TOOL_CALLS). 환경변수가 프로필보다 우선합니다.
 python main.py --project quantum_computing --profile test-groq
 
 # 실행 (기획보고서 원문 모드 — .md/.txt, HWP는 md로 변환 후 투입)

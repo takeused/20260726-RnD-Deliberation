@@ -35,3 +35,27 @@ def as_daily_quota(exc: BaseException) -> DailyQuotaExceeded | None:
         return None
     wait = _WAIT_RE.search(text)
     return DailyQuotaExceeded(text[:300], wait.group(1) if wait else None)
+
+
+class RequestTooLarge(RuntimeError):
+    """요청 하나가 공급자의 분당 토큰 한도보다 큼 (예: Groq 413). 기다려도 같은 결과라 재시도하지 않는다."""
+
+
+def as_request_too_large(exc: BaseException) -> RequestTooLarge | None:
+    if isinstance(exc, RequestTooLarge):
+        return exc
+    text = str(exc)
+    if re.search(r"Error code:\s*413|request too large", text, re.I):
+        return RequestTooLarge(text[:300])
+    return None
+
+
+def suggested_wait_seconds(exc: BaseException) -> float | None:
+    """'try again in 1m2.5s' / '577ms' 같은 공급자 안내를 초로 바꾼다 (없으면 None)."""
+    m = re.search(r"try again in\s+((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", str(exc), re.I)
+    if not m:
+        return None
+    total = 0.0
+    for value, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", m.group(1)):
+        total += float(value) * {"ms": 0.001, "s": 1, "m": 60, "h": 3600}[unit]
+    return total

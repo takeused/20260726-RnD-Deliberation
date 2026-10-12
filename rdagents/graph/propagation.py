@@ -24,6 +24,8 @@ class Propagator:
         precheck_md: str = "",
         precheck_brief: str = "",
         prompt_char_budget: int = 0,
+        tool_result_char_budget: int = 0,
+        max_analyst_tool_calls: int = 0,
         execution_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """그래프 초기 상태 생성."""
@@ -40,6 +42,8 @@ class Propagator:
             "precheck_md": precheck_md,
             "precheck_brief": precheck_brief,
             "prompt_char_budget": prompt_char_budget,
+            "tool_result_char_budget": tool_result_char_budget,
+            "max_analyst_tool_calls": max_analyst_tool_calls,
             "rereview_comparison_md": "",
             "execution_metrics": [],
             "execution_metadata": execution_metadata or {},

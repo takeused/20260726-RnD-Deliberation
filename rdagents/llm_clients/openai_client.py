@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
 from .capabilities import get_capabilities
-from .quota import as_daily_quota
+from .quota import as_daily_quota, as_request_too_large, suggested_wait_seconds
 from .validators import validate_model
 
 
@@ -36,11 +36,12 @@ class NormalizedChatOpenAI(ChatOpenAI):
     def invoke(self, input, config=None, **kwargs):
         import time
         import logging
-        from openai import RateLimitError
-        
-        max_retries = 3
+        from openai import APIStatusError, RateLimitError
+
+        # 분당 한도(TPM/RPM)가 작은 무료 등급은 연속 요청이 자주 막힌다 -> 공급자가 알려 준 대기 시간만큼 기다림
+        max_retries = 6
         delay = 3.0
-        
+
         for attempt in range(max_retries):
             try:
                 return normalize_content(super().invoke(input, config, **kwargs))
@@ -49,12 +50,18 @@ class NormalizedChatOpenAI(ChatOpenAI):
                     raise daily from e  # 하루 한도는 몇 초 기다려도 안 풀림 -> 재시도하지 않음
                 if attempt == max_retries - 1:
                     raise e
+                wait = suggested_wait_seconds(e)
+                wait = min(wait + 0.5, 60.0) if wait is not None else delay
                 logging.getLogger(__name__).warning(
                     "OpenAI-compatible LLM RateLimit (429) hit. Waiting %.1fs before retry (Attempt %d/%d)",
-                    delay, attempt + 1, max_retries
+                    wait, attempt + 1, max_retries
                 )
-                time.sleep(delay)
-                delay *= 2
+                time.sleep(wait)
+                delay = min(delay * 2, 60.0)
+            except APIStatusError as e:
+                if too_large := as_request_too_large(e):
+                    raise too_large from e  # 요청 하나가 분당 한도보다 큼: 재시도해도 같은 결과
+                raise
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
         caps = get_capabilities(self.model_name)

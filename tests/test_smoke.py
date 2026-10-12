@@ -322,7 +322,7 @@ class FakeLLM:
     def __init__(self):
         self.calls = 0
 
-    def bind_tools(self, _tools):
+    def bind_tools(self, _tools, **_kwargs):
         def _run(_prompt_val):
             return AIMessage(content="[가짜 분석 보고서] 근거와 표를 포함한 상세 분석.")
         return _run
@@ -494,6 +494,112 @@ def test_daily_quota_detection():
     per_minute = GROQ_TPD_MESSAGE.replace("tokens per day (TPD)", "tokens per minute (TPM)")
     assert as_daily_quota(RuntimeError(per_minute)) is None      # 분당 한도는 기존처럼 재시도
     assert as_daily_quota(ValueError("schema validation failed")) is None
+
+
+def test_per_minute_limit_waits_as_told_and_413_stops(monkeypatch):
+    """분당 한도는 공급자가 알려 준 시간만큼 기다렸다 재시도, 요청 초과(413)는 재시도 없이 멈춤."""
+    import httpx
+    import pytest
+    from langchain_openai import ChatOpenAI
+    from openai import APIStatusError, RateLimitError
+
+    from rdagents.llm_clients.openai_client import NormalizedChatOpenAI
+    from rdagents.llm_clients.quota import RequestTooLarge, as_request_too_large
+
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    tpm = GROQ_TPD_MESSAGE.replace("tokens per day (TPD)", "tokens per minute (TPM)").replace("10m5.232s", "2.5s")
+    calls, sleeps = {"n": 0}, []
+
+    def flaky(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RateLimitError(tpm, response=httpx.Response(429, request=req), body=None)
+        return AIMessage(content="ok")
+
+    monkeypatch.setattr(ChatOpenAI, "invoke", flaky)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+    llm = NormalizedChatOpenAI(model="openai/gpt-oss-120b", api_key="test", base_url="https://api.groq.com/openai/v1")
+    assert llm.invoke("hi").content == "ok"
+    assert sleeps == [3.0, 3.0]  # 안내된 2.5초 + 여유 0.5초
+
+    too_large = ("Error code: 413 - {'error': {'message': 'Request too large for model `openai/gpt-oss-120b` "
+                 "on tokens per minute (TPM): Limit 8000, Requested 8555'}}")
+
+    def huge(self, *args, **kwargs):
+        raise APIStatusError(too_large, response=httpx.Response(413, request=req), body=None)
+
+    monkeypatch.setattr(ChatOpenAI, "invoke", huge)
+    with pytest.raises(RequestTooLarge):
+        llm.invoke("hi")
+    assert as_request_too_large(RuntimeError("Requested 4130 tokens")) is None  # 숫자 4130에 속지 않음
+
+
+def test_tool_results_fit_budget_without_touching_state():
+    """도구 결과 총량을 예산 안으로: 최근 결과는 그대로, 오래된 결과는 앞부분만. 원본 상태는 그대로."""
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    from rdagents.agents.utils.agent_utils import fit_tool_messages
+
+    msgs = [HumanMessage(content="시작")] + [
+        ToolMessage(content=f"[결과{i}]" + "가" * 2000, tool_call_id=f"t{i}") for i in range(4)
+    ]
+    assert fit_tool_messages(msgs, {"tool_result_char_budget": 0}) is msgs     # 0이면 그대로
+    fitted = fit_tool_messages(msgs, {"tool_result_char_budget": 3500})
+    assert fitted[-1].content == msgs[-1].content                             # 가장 최근 결과는 온전히
+    assert all("요청 크기 예산" in m.content for m in fitted[1:3])          # 오래된 결과는 줄임
+    assert fitted[1].content.startswith("[결과0]")                           # 앞부분은 남김
+    assert all(len(m.content) == 2005 for m in msgs[1:])                     # 상태의 원본은 그대로
+    assert sum(len(m.content) for m in fitted[1:]) < 2005 * 4 * 0.6
+
+def test_analyst_tool_call_cap(monkeypatch):
+    """도구 결과가 상한에 이르면 도구를 못 부르게(tool_choice=none) 하고 보고서 작성을 지시한다.
+    상태에 값이 없으면(설정 추가 전 체크포인트) 환경변수를 읽는다."""
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    from rdagents.agents.utils.agent_utils import TOOL_LIMIT_NOTE, bind_analyst_tools
+
+    class Recorder:
+        def bind_tools(self, tools, **kwargs):
+            return kwargs
+
+    two = [HumanMessage(content="시작")] + [ToolMessage(content="결과", tool_call_id=f"t{i}") for i in range(2)]
+    three = two + [ToolMessage(content="결과", tool_call_id="t2")]
+
+    kwargs, msgs = bind_analyst_tools(Recorder(), [], {"messages": two, "max_analyst_tool_calls": 3})
+    assert kwargs == {} and msgs[-1].content == "결과"                     # 아직 상한 전
+    kwargs, msgs = bind_analyst_tools(Recorder(), [], {"messages": three, "max_analyst_tool_calls": 3})
+    assert kwargs == {"tool_choice": "none"} and msgs[-1].content == TOOL_LIMIT_NOTE
+    kwargs, _ = bind_analyst_tools(Recorder(), [], {"messages": three, "max_analyst_tool_calls": 0})
+    assert kwargs == {}                                                     # 0이면 무제한
+
+    monkeypatch.setenv("RDAGENTS_MAX_ANALYST_TOOL_CALLS", "3")
+    kwargs, _ = bind_analyst_tools(Recorder(), [], {"messages": three})     # 상태에 값 없음 -> 환경변수
+    assert kwargs == {"tool_choice": "none"}
+
+def test_explicit_env_beats_profile(monkeypatch):
+    """프로파일보다 사용자가 직접 준 RDAGENTS_* 환경변수가 우선 (요청 초과 안내대로 조각만 줄여 재실행 가능)."""
+    import main
+
+    captured = {}
+
+    class Graph:
+        def __init__(self, config=None, debug=False):
+            captured.update(config or {})
+            self.config = {**captured}
+
+        def propagate(self, **kwargs):
+            raise RuntimeError("stop")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(main, "RDReviewGraph", Graph)
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("RDAGENTS_REPORT_CHUNK_CHARS", "600")
+    monkeypatch.setattr(sys, "argv", ["main.py", "--profile", "test-groq"])
+    assert main.main() == 1
+    assert "report_chunk_chars" not in captured            # 환경변수 값(600)이 DEFAULT_CONFIG로 들어가게 둠
+    assert captured["report_retrieval_top_k"] == 2         # 환경변수로 안 준 값은 프로파일 그대로
 
 
 def test_daily_quota_stops_retries_immediately(monkeypatch):

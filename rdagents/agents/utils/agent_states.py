@@ -75,6 +75,8 @@ class ReviewAgentState(MessagesState):
     precheck_md: Annotated[str, "기획보고서 사전 점검표 (규칙 기반)"]
     precheck_brief: Annotated[str, "사전 점검의 누락·근거 약함 요약 (에이전트 지시문용)"]
     prompt_char_budget: Annotated[int, "노드 입력 절단 예산 (문자 수, 0=무제한)"]
+    tool_result_char_budget: Annotated[int, "분석가가 LLM에 보내는 도구 결과 총량 예산 (문자 수, 0=무제한)"]
+    max_analyst_tool_calls: Annotated[int, "분석가 1명의 도구 호출 상한 (0=무제한)"]
     rereview_comparison_md: Annotated[str, "재심의 전후 비교 보고서"]
     execution_metrics: Annotated[list[dict], "노드별 실행시간·토큰 관측값"]
     execution_metadata: Annotated[dict, "실행 ID·모델·체크포인트 메타데이터"]

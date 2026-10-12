@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage
+import os
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 def make_ai_message(content: str, name: str, usage: dict | None = None) -> AIMessage:
@@ -14,6 +16,56 @@ def make_ai_message(content: str, name: str, usage: dict | None = None) -> AIMes
     if usage:
         return AIMessage(content=content, name=name, usage_metadata=usage)
     return AIMessage(content=content, name=name)
+
+
+def _setting(state: dict, key: str, env_var: str) -> int:
+    """상태 값, 없으면 환경변수. 이 설정이 생기기 전에 만든 체크포인트로 이어서 실행해도 적용되도록."""
+    value = state.get(key)
+    if value is None:
+        value = os.environ.get(env_var) or 0
+    return int(value or 0)
+
+
+TOOL_LIMIT_NOTE = (
+    "도구 호출 한도에 도달했습니다. 더 이상 도구를 부르지 말고, 지금까지 확보한 자료만으로 "
+    "분석 보고서를 완성하세요. 확인하지 못한 항목은 [확인 필요]로 표시하세요."
+)
+
+
+def bind_analyst_tools(llm, tools: list, state: dict):
+    """(바인딩된 모델, 보낼 메시지). 도구 호출이 상한에 이르면 도구를 못 부르게 하고 보고서 작성을 지시한다."""
+    messages = fit_tool_messages(state["messages"], state)
+    cap = _setting(state, "max_analyst_tool_calls", "RDAGENTS_MAX_ANALYST_TOOL_CALLS")
+    used = sum(isinstance(m, ToolMessage) for m in state["messages"])
+    if cap and used >= cap:
+        return llm.bind_tools(tools, tool_choice="none"), [*messages, HumanMessage(content=TOOL_LIMIT_NOTE)]
+    return llm.bind_tools(tools), messages
+
+
+def fit_tool_messages(messages: list, state: dict, min_keep: int = 300) -> list:
+    """LLM에 보낼 메시지의 도구 결과 총량을 tool_result_char_budget(0=무제한) 안으로 줄인다.
+
+    최근 도구 결과부터 예산을 배정하고, 예산을 넘는 오래된 결과는 앞부분 min_keep자만 남긴다.
+    상태(체크포인트)에 저장된 원본은 바꾸지 않고, 이번 호출에 보내는 사본만 줄인다.
+    NDMI 보고서 실행에서 분석가가 도구를 4번 부르자 요청이 Groq 분당 한도(8,000토큰)를 넘었다(413).
+    """
+    budget = _setting(state, "tool_result_char_budget", "RDAGENTS_TOOL_RESULT_CHAR_BUDGET")
+    if budget <= 0:
+        return messages
+    out, used = list(messages), 0
+    for i in range(len(out) - 1, -1, -1):
+        m = out[i]
+        if not isinstance(m, ToolMessage):
+            continue
+        text = m.content if isinstance(m.content, str) else str(m.content)
+        if used + len(text) <= budget:
+            used += len(text)
+            continue
+        keep = max(budget - used, min_keep)
+        clipped = text[:keep] + f"\n…(앞선 도구 결과 {len(text) - keep:,}자 생략: 요청 크기 예산)"
+        out[i] = m.model_copy(update={"content": clipped})
+        used += len(clipped)
+    return out
 
 
 def clip_text(text: str, state: dict, fraction: float = 1.0) -> str:

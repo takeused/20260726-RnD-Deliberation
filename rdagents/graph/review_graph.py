@@ -151,6 +151,8 @@ class RDReviewGraph:
             precheck_md=precheck_md,
             precheck_brief=precheck_brief,
             prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
+            tool_result_char_budget=int(self.config.get("tool_result_char_budget") or 0),
+            max_analyst_tool_calls=int(self.config.get("max_analyst_tool_calls") or 0),
             execution_metadata={
                 "execution_id": execution_id,
                 "provider": self.config["llm_provider"],

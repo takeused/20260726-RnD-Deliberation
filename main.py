@@ -14,9 +14,10 @@ try:
 except ImportError:  # 선택 의존성: 없으면 기본 인증서 묶음 사용
     pass
 
+from rdagents.default_config import _ENV_OVERRIDES
 from rdagents.graph.review_graph import RDReviewGraph
 from rdagents.llm_clients.api_key_env import get_api_key_env
-from rdagents.llm_clients.quota import DailyQuotaExceeded
+from rdagents.llm_clients.quota import DailyQuotaExceeded, RequestTooLarge
 
 
 _KEY_OPTIONAL_PROVIDERS = {"bedrock", "ollama", "openai_compatible"}
@@ -29,8 +30,14 @@ PROFILES = {
         "deep_think_llm": "openai/gpt-oss-120b",
         "quick_think_llm": "openai/gpt-oss-120b",
         "prompt_char_budget": 1200,
-        "report_chunk_chars": 1500,
+        # 분석가가 도구 3개(개요·기술·검색)를 부르면 결과가 한 요청에 쌓인다. 1500자 조각이면 8,555토큰으로
+        # 분당 한도(8,000)를 넘었음(NDMI 실행, 413) -> 900자
+        "report_chunk_chars": 900,
         "report_retrieval_top_k": 2,
+        # 조각을 줄여도 도구를 4번 부르면 다시 넘었음 -> 도구 결과 총량에 예산 (약 2,500토큰)
+        "tool_result_char_budget": 3500,
+        # 분석가 3명에 약 9만 토큰이 들어 하루 한도(20만)로 심의를 끝낼 수 없었음 -> 도구 호출 3번까지
+        "max_analyst_tool_calls": 3,
     },
     "test-local": {
         "llm_provider": "ollama",
@@ -139,6 +146,10 @@ def main():
 
     # 프로파일·관문 오버라이드 (모든 실행 모드에 공통 적용)
     overrides = dict(PROFILES[args.profile]) if args.profile else {}
+    # 사용자가 RDAGENTS_* 환경변수로 직접 준 값은 프로파일보다 우선 (예: 요청이 크면 조각 크기만 줄여 재실행)
+    for env_var, key in _ENV_OVERRIDES.items():
+        if os.environ.get(env_var):
+            overrides.pop(key, None)
     if args.gate:
         overrides["review_gate"] = args.gate
     overrides = overrides or None
@@ -260,6 +271,13 @@ def main():
               "더 오래 기다려야 할 수 있습니다 (Groq 무료: 하루 20만 토큰, 심의 1회 약 11만 토큰).", file=sys.stderr)
         print(f"공급자 메시지: {e}", file=sys.stderr)
         return 3
+    except RequestTooLarge as e:
+        print(f"\n[요청 크기 초과] {provider} 공급자의 분당 토큰 한도보다 큰 요청이 만들어져 심의를 멈췄습니다.",
+              file=sys.stderr)
+        print("보고서 조각을 줄여 다시 실행하세요. 예: RDAGENTS_REPORT_CHUNK_CHARS=600, RDAGENTS_REPORT_TOP_K=1. "
+              "체크포인트를 켰다면 같은 --execution-id로 이어서 실행됩니다.", file=sys.stderr)
+        print(f"공급자 메시지: {e}", file=sys.stderr)
+        return 4
     except Exception as e:
         print(f"\n[오류 발생]: {e}", file=sys.stderr)
         return 1

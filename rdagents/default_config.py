@@ -14,6 +14,8 @@ _ENV_OVERRIDES = {
     "RDAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "RDAGENTS_REVIEW_GATE":         "review_gate",
     "RDAGENTS_PROMPT_CHAR_BUDGET":  "prompt_char_budget",
+    "RDAGENTS_TOOL_RESULT_CHAR_BUDGET": "tool_result_char_budget",
+    "RDAGENTS_MAX_ANALYST_TOOL_CALLS": "max_analyst_tool_calls",
     "RDAGENTS_MAX_MEMORY_ENTRIES":  "max_memory_entries",
     "RDAGENTS_MAX_MEMORY_CHARS":    "max_memory_chars",
     "RDAGENTS_MAX_REPORT_BYTES":   "max_report_bytes",
@@ -118,6 +120,12 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "review_gate": "부처심의",
     # 노드별 긴 입력 절단 예산 (문자 수, 0 = 무제한). 소형 컨텍스트 백엔드용
     "prompt_char_budget": 0,
+    # 분석가가 LLM에 보내는 도구 결과의 총 문자 수 상한 (0=무제한). 도구를 부를수록 결과가 쌓여
+    # 분당 토큰 한도가 작은 공급자(Groq 무료 8,000)에서 요청 하나가 한도를 넘는 것을 막는다
+    "tool_result_char_budget": 0,
+    # 분석가 1명이 부를 수 있는 도구 횟수 (0=무제한). 도구를 부를 때마다 LLM 요청이 한 번 더 나가므로
+    # 하루 토큰 한도가 작은 공급자에서 비용을 크게 줄인다 (NDMI 실행: 분석가 3명에 약 9만 토큰)
+    "max_analyst_tool_calls": 0,
     # 출력 언어
     "output_language": "Korean",
     # 토론 및 심의 설정
