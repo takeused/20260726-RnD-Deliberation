@@ -51,6 +51,7 @@ def create_question_extractor(llm):
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
             ("human", "## 기출·전형 질의 참고 (실제 심의 질의는 이런 패턴으로 나온다)\n\n{question_bank}\n\n"
+                      "## 기획보고서 사전 점검 (규칙 기반)\n\n{precheck}\n\n"
                       "## 전문가 분석 보고서\n\n{reports}\n\n"
                       "## 심사위원 패널-발표자 공방\n\n{debate_history}\n\n"
                       "## 전문위원회 위원장 의견\n\n{review_plan}\n\n"
@@ -69,6 +70,8 @@ def create_question_extractor(llm):
 
         prompt_val = prompt.invoke({
             "question_bank": clip_text(state.get("question_bank") or "", state, fraction=0.5) or "참고 자료 없음",
+            "precheck": state.get("precheck_brief")
+                or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
             "reports": _clip_half("\n\n".join(reports), state) or "분석 보고서 없음",
             "debate_history": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
             "review_plan": state.get("review_plan", "의견 없음"),

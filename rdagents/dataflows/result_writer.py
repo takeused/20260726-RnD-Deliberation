@@ -31,6 +31,7 @@ _ANALYST_FILES = [
 
 _REPORT_FILES = [
     ("00_입력문서_출처.md", "입력 문서·출처"),
+    ("00b_사전점검.md", "기획보고서 사전 점검"),
     ("01a_분석_기술가치.md", "기술 가치 분석"),
     ("01b_분석_기술트렌드중복성.md", "기술 트렌드·중복성 분석"),
     ("01c_분석_경제재무.md", "경제·재무 분석"),
@@ -237,6 +238,8 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         (out_dir / filename).write_text(content or "(내용 없음)", encoding="utf-8")
 
     write("00_입력문서_출처.md", final_state.get("source_manifest", ""))
+    if final_state.get("precheck_md"):
+        write("00b_사전점검.md", final_state["precheck_md"])
 
     for key, filename in _ANALYST_FILES:
         write(filename, final_state.get(key, ""))

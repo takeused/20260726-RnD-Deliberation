@@ -38,7 +38,8 @@ def create_panel_examiner(llm):
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
-            ("human", "다음은 전문가들의 사전 분석 보고서입니다:\n\n{reports}\n\n"
+            ("human", "## 기획보고서 사전 점검 (규칙 기반)\n{precheck}\n\n"
+                      "다음은 전문가들의 사전 분석 보고서입니다:\n\n{reports}\n\n"
                       "발표자(사업 담당자)의 이전 방어 발언:\n{defender_history}\n\n"
                       "패널이 이전에 던진 질의·지적:\n{examiner_history}\n\n"
                       "위 내용을 바탕으로 이번 라운드의 심사 질의·지적을 제시하세요."),
@@ -50,6 +51,9 @@ def create_panel_examiner(llm):
                 reports.append(f"--- {name} ---\n{state[key]}")
 
         prompt_val = prompt.invoke({
+            # 규칙 점검에서 누락·근거 약함으로 나온 항목 = 우선 공격 지점 (템플릿 변수로 넘겨 원문의 중괄호에 안전)
+            "precheck": state.get("precheck_brief")
+                or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
             "reports": clip_text("\n\n".join(reports), state) or "분석 보고서 없음",
             "defender_history": clip_text(state["review_debate_state"]["defender_history"], state)
                 or "아직 발표자 발언이 없습니다. 보고서 자체의 허점을 공격하세요.",

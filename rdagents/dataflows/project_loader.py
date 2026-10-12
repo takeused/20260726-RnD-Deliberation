@@ -307,6 +307,14 @@ def get_source_manifest() -> str:
     )
 
 
+def get_report_text_and_name() -> tuple[str | None, str | None]:
+    """원문 모드의 기획보고서 본문과 파일명 (샘플 JSON 모드면 (None, None)). 사전 점검 입력용."""
+    context = _current_context.get()
+    if context is None:
+        return None, None
+    return context.report_text, context.report_name
+
+
 def get_project_facts() -> dict[str, Any]:
     """현재 실행에 고정된 코드 검증 사업 사실을 반환한다."""
     context = _current_context.get()

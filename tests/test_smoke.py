@@ -470,7 +470,54 @@ def run_report_mode_and_memory():
     assert "양자컴퓨팅_기획보고서" in fs2["past_context"]
     assert "재심의" in fs2["rereview_comparison_md"]
 
+    # 원문 모드에서는 심의 전에 규칙 기반 사전 점검이 돌고 결과가 저장된다
+    assert "기획보고서 사전 점검" in fs1["precheck_md"]
+    assert "정부지원 필요성" in fs1["precheck_brief"]          # 짧은 보고서라 누락 항목이 요약에 올라감
+    saved = list((tmp / "logs").rglob("00b_사전점검.md"))
+    assert saved and "[출처: 양자컴퓨팅_기획보고서.md L" in saved[0].read_text(encoding="utf-8")
+
     print("=== 원문 모드 + 재심의 메모리 테스트 통과 ===")
+
+
+def test_plan_precheck_rules():
+    from rdagents.dataflows.plan_precheck import check_lines, precheck_brief, run_precheck
+
+    lines = [
+        "<!-- p.2 -->",
+        "## 1. 추진 배경",
+        "- 최근 5년간 온열질환자가 증가 추세이다.",          # 수치 없는 시급성 -> 근거 약함
+        "- 민간 기업은 투자 유인이 적어 정부 지원이 필요하다.",
+        "- 총 사업비: 120억 원, 비목별 단가 산출 근거 별첨",
+        "- 실증 이후 운영 주체는 사업 착수 후 협의한다.",   # 미정 표현 -> 근거 약함
+        "「재난 및 안전관리 기본법 시행령」 제3조의2(재난관리주관기관)",  # 법령 용어는 추진체계 아님
+    ]
+    status = {r.item.key: r.status for r in check_lines(lines)}
+    assert status["urgency"] == "근거 약함" and status["operation"] == "근거 약함"
+    assert status["gov_support"] == "충족" and status["budget"] == "충족"
+    assert status["governance"] == "누락" and status["novelty"] == "누락"
+    brief = precheck_brief(check_lines(lines), "a.md")
+    assert "[시급성] 시급성의 정량 근거 — 근거 약함" in brief and "[출처: a.md L3-L3] (p.2)" in brief
+    assert "추진 배경" not in brief                            # 충족 항목은 요약에서 뺀다 (토큰 절약)
+    assert run_precheck(None, None) == ("", "")                # 샘플 JSON 모드면 점검 안 함
+
+
+def test_panel_prompt_receives_precheck_brief():
+    """패널 지시문에 사전 점검 요약이 들어가고, 원문의 중괄호가 템플릿을 깨지 않는다."""
+    from rdagents.agents.researchers.panel_examiner import create_panel_examiner
+
+    seen = {}
+
+    class Capture:
+        def invoke(self, prompt_val):
+            seen["text"] = prompt_val.to_string()
+            return AIMessage(content="[가짜 질의]")
+
+    node = create_panel_examiner(Capture())
+    node({
+        "precheck_brief": "- [시급성] 시급성의 정량 근거 — 근거 약함 {중괄호 포함 원문}",
+        "review_debate_state": {"examiner_history": "", "defender_history": "", "history": "", "count": 0},
+    })
+    assert "시급성의 정량 근거 — 근거 약함 {중괄호 포함 원문}" in seen["text"]
 
 
 def test_structured_retry_recovers_after_validation_error():
