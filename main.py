@@ -38,6 +38,9 @@ PROFILES = {
         "tool_result_char_budget": 3500,
         # 분석가 3명에 약 9만 토큰이 들어 하루 한도(20만)로 심의를 끝낼 수 없었음 -> 도구 호출 3번까지
         "max_analyst_tool_calls": 3,
+        # gpt-oss는 추론 토큰도 출력 상한(Groq 기본 3,072)을 쓴다. NDMI 실행에서 응답 5건이 상한에서 잘렸고
+        # 예상 질의 JSON이 완성되지 못했음 -> 추론을 줄여 본문에 출력을 남긴다
+        "openai_reasoning_effort": "low",
     },
     "test-local": {
         "llm_provider": "ollama",
@@ -294,8 +297,10 @@ def main():
     except RequestTooLarge as e:
         print(f"\n[요청 크기 초과] {provider} 공급자의 분당 토큰 한도보다 큰 요청이 만들어져 심의를 멈췄습니다.",
               file=sys.stderr)
-        print("보고서 조각을 줄여 다시 실행하세요. 예: RDAGENTS_REPORT_CHUNK_CHARS=600, RDAGENTS_REPORT_TOP_K=1. "
-              "체크포인트를 켰다면 같은 --execution-id로 이어서 실행됩니다.", file=sys.stderr)
+        print("분석가 단계면 보고서 조각을 줄이세요. 예: RDAGENTS_REPORT_CHUNK_CHARS=600, RDAGENTS_REPORT_TOP_K=1. "
+              "공방 이후 단계면 문맥 예산을 줄이세요. 예: RDAGENTS_PROMPT_CHAR_BUDGET=900. "
+              "체크포인트를 켰다면 같은 --execution-id로 이어서 실행되고, 새로 준 환경변수가 적용됩니다. "
+              "얼마나 줄일지는 --estimate-tokens로 먼저 확인하세요.", file=sys.stderr)
         print(f"공급자 메시지: {e}", file=sys.stderr)
         return 4
     except Exception as e:

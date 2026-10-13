@@ -19,10 +19,14 @@ def make_ai_message(content: str, name: str, usage: dict | None = None) -> AIMes
 
 
 def _setting(state: dict, key: str, env_var: str) -> int:
-    """상태 값, 없으면 환경변수. 이 설정이 생기기 전에 만든 체크포인트로 이어서 실행해도 적용되도록."""
-    value = state.get(key)
-    if value is None:
-        value = os.environ.get(env_var) or 0
+    """사용자가 준 환경변수, 없으면 상태 값.
+
+    환경변수를 먼저 보는 이유: 체크포인트로 이어서 실행할 때 상태에는 처음 실행한 설정이 남아 있다.
+    요청이 커서 멈춘 뒤 예산을 줄여 다시 실행하려면 새로 준 값이 이겨야 한다 (NDMI 실행, 예상 질의 단계 413).
+    """
+    value = os.environ.get(env_var)
+    if not value:
+        value = state.get(key)
     return int(value or 0)
 
 
@@ -95,7 +99,7 @@ def clip_text(text: str, state: dict, fraction: float = 1.0) -> str:
     긴 심의 이력이 컨텍스트 초과로 실행을 중단시키는 것을 막는다.
     fraction: 입력 섹션이 많은 노드는 섹션당 예산을 줄이기 위해 1 미만을 지정.
     """
-    budget = int((state.get("prompt_char_budget") or 0) * fraction)
+    budget = int(_setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET") * fraction)
     if budget <= 0 or len(text) <= budget:
         return text
     head = int(budget * 0.6)

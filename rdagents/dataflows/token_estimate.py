@@ -34,6 +34,10 @@ OUT_REPORT = 3000          # 분석가 보고서 턴: 2,979~3,072 (3,072는 출�
 OUT_STRUCTURED = 1500      # 구조화 출력(의견·예산안·결정·예상 질의): 관측 전이라 보수적 가정
 OUT_TEXT = 1500            # 공방·토론 발언
 RETRY_MARK = "직전 출력이 스키마 검증에 실패했습니다"
+# Groq는 '입력 + 출력 상한'을 요청 크기로 보고 분당 한도와 비교한다. 출력 상한을 주지 않으면 3,072(관측값).
+# NDMI 실행에서 예상 질의 단계가 입력 약 4,970토큰인데 "Requested 8041"로 413을 받았다.
+OUTPUT_CAP = 3072
+TPM_MARGIN = 0.9           # 글자 수 환산 오차(~10%)를 감안해 한도의 90%를 넘으면 주의
 
 
 @dataclass
@@ -292,6 +296,12 @@ def render(est: Estimate, tpm: int, tpd: int) -> str:
     calls = [c for c in est.calls if not c.retry]
     total = sum(c.total for c in calls)
     biggest = max(calls, key=lambda c: c.input_tokens, default=None)
+
+    def request(c: Call) -> int:
+        return c.input_tokens + OUTPUT_CAP
+
+    def mark(tokens: int) -> str:
+        return " ⛔" if tokens > tpm else " ⚠️" if tokens > tpm * TPM_MARGIN else ""
     by_node: dict[str, list[Call]] = {}
     for c in calls:
         by_node.setdefault(c.node, []).append(c)
@@ -300,16 +310,22 @@ def render(est: Estimate, tpm: int, tpd: int) -> str:
         lines.append(f"체크포인트: 이미 끝난 호출 {len(est.skipped)}건, 지금까지 실제 사용 {est.used_tokens:,}토큰. "
                      "아래는 이어서 실행할 남은 부분입니다.")
         lines.append("")
-    lines += ["| 노드 | 호출 | 가장 큰 입력 | 합계(입력+출력) |", "|---|---|---|---|"]
+    lines += ["| 노드 | 호출 | 가장 큰 입력 | 요청 크기(입력+출력 상한) | 합계(입력+출력) |", "|---|---|---|---|---|"]
     for node, cs in by_node.items():
         top = max(c.input_tokens for c in cs)
-        flag = " ⚠️" if top > tpm else ""
-        lines.append(f"| {node} | {len(cs)} | {top:,}{flag} | {sum(c.total for c in cs):,} |")
+        lines.append(f"| {node} | {len(cs)} | {top:,} | {top + OUTPUT_CAP:,}{mark(top + OUTPUT_CAP)} | "
+                     f"{sum(c.total for c in cs):,} |")
     lines += ["", f"- 남은 호출 {len(calls)}건, 예상 {total:,}토큰 (하루 한도 {tpd:,}의 {total / tpd:.0%})"]
     if biggest:
-        verdict = "넘음 -> 413으로 멈춤. 조각·예산을 줄이세요" if biggest.input_tokens > tpm else "안"
-        lines.append(f"- 가장 큰 요청: {biggest.node} 입력 약 {biggest.input_tokens:,}토큰 "
-                     f"(분당 한도 {tpm:,} {verdict})")
+        size = request(biggest)
+        verdict = (f"분당 한도 {tpm:,} 넘음 -> 413으로 멈춤" if size > tpm else
+                   f"분당 한도 {tpm:,}의 {TPM_MARGIN:.0%} 넘음 -> 추정 오차로 413이 날 수 있음"
+                   if size > tpm * TPM_MARGIN else f"분당 한도 {tpm:,} 안")
+        lines.append(f"- 가장 큰 요청: {biggest.node} 입력 약 {biggest.input_tokens:,} + 출력 상한 {OUTPUT_CAP:,} "
+                     f"= {size:,}토큰 ({verdict})")
+        if size > tpm * TPM_MARGIN:
+            lines.append("  - 줄이는 법: 분석가 단계면 RDAGENTS_REPORT_CHUNK_CHARS·RDAGENTS_TOOL_RESULT_CHAR_BUDGET, "
+                         "그 뒤 단계면 RDAGENTS_PROMPT_CHAR_BUDGET (환경변수가 체크포인트 값보다 우선)")
     lines.append("- 하루 한도는 최근 24시간 합계라, 그사이 다른 실행에서 쓴 토큰도 빼고 생각해야 합니다")
     lines += ["", "가정: 글자 수 ÷ {:.2f} = 토큰. 출력은 도구 턴 {}, 분석 보고서 {}, 구조화 {}, 발언 {}토큰. "
               "구조화 출력이 검증에 실패해 다시 요청하면 그만큼 늘어납니다.".format(

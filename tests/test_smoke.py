@@ -861,8 +861,9 @@ def test_token_estimate_counts_calls_without_api():
     assert not any(c.retry for c in est.calls)                      # 가짜 응답이 검증을 통과 (재시도 없음)
     assert [c.kind for c in est.calls if c.node == "Final Approver"] == ["구조화"]
     out = te.render(est, tpm=8000, tpd=200000)
-    assert "남은 호출" in out and "분당 한도 8,000 안" in out
-    assert "⚠️" in te.render(est, tpm=100, tpd=200000)               # 분당 한도보다 큰 요청 표시
+    assert "남은 호출" in out and "출력 상한 3,072" in out           # 요청 크기 = 입력 + 출력 상한 (Groq 방식)
+    assert "분당 한도 100,000 안" in te.render(est, tpm=100000, tpd=200000)
+    assert "⛔" in te.render(est, tpm=3000, tpd=200000)              # 분당 한도보다 큰 요청 표시
 
     # 체크포인트: 보고서가 저장된 분석가와 이미 실행된 노드는 남은 부분에서 뺀다
     state = {"tech_value_report": "끝", "execution_metrics": [{"node": "Panel Examiner", "total_tokens": 10}]}

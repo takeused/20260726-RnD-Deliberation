@@ -43,9 +43,9 @@ def create_quality_assessor(llm):
             "sources": state.get("source_manifest") or "출처 정보 없음",
             "reports": clip_text(reports, state, fraction=0.5) or "전문 분석 없음",
             "debate": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 없음",
-            "review_plan": state.get("review_plan") or "의견 없음",
+            "review_plan": clip_text(state.get("review_plan") or "", state, fraction=0.5) or "의견 없음",
             "audit": clip_text(state["audit_debate_state"]["history"], state, fraction=0.5) or "재정 검토 없음",
-            "decision": state.get("final_review_decision") or "최종 결정 없음",
+            "decision": clip_text(state.get("final_review_decision") or "", state, fraction=0.5) or "최종 결정 없음",
         })
         call = invoke_structured_model(llm, DecisionQualityReport, prompt_val, "Quality Assessor")
         report = call.model

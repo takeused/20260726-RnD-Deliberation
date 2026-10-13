@@ -74,9 +74,9 @@ def create_question_extractor(llm):
                 or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
             "reports": _clip_half("\n\n".join(reports), state) or "분석 보고서 없음",
             "debate_history": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
-            "review_plan": state.get("review_plan", "의견 없음"),
+            "review_plan": clip_text(state.get("review_plan") or "", state, fraction=0.5) or "의견 없음",
             "audit_history": clip_text(state["audit_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
-            "final_decision": state.get("final_review_decision", "결정 없음"),
+            "final_decision": clip_text(state.get("final_review_decision") or "", state, fraction=0.5) or "결정 없음",
         })
 
         call = invoke_structured_model(

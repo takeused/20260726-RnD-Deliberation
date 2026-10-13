@@ -156,7 +156,9 @@ def invoke_structured_model(
                 HumanMessage(
                     content=(
                         "직전 출력이 스키마 검증에 실패했습니다. 오류:\n"
-                        f"{error_text}\n"
+                        # 공급자 오류에는 잘린 출력 원문(failed_generation)이 통째로 들어 있을 수 있다.
+                        # 그대로 붙이면 재시도 요청이 분당 한도를 넘는다 (NDMI 실행: 9,052토큰으로 413)
+                        f"{error_text[:500]}\n"
                         "위 오류를 해결하여 모든 필드 제약을 지킨 구조화 출력을 다시 생성하세요."
                     )
                 )
