@@ -14,6 +14,30 @@ from .quota import as_daily_quota, as_request_too_large, suggested_wait_seconds
 from .validators import validate_model
 
 
+TRUNCATED_NOTE = "\n\n…[출력 토큰 한도에 걸려 여기서 잘렸습니다. 뒷부분은 확인 필요]"
+
+
+def mark_truncated(response, kwargs: dict):
+    """출력 한도에서 끊긴 응답(finish_reason=length)을 알린다.
+
+    NDMI 실행에서 분석가 보고서 2건이 출력 3,072토큰에서 문장 중간에 끊긴 채 다음 단계로 넘어갔다
+    (gpt-oss는 추론 토큰도 출력 한도를 쓴다). 글 응답이면 끝에 잘림 표시를 붙여 뒤 단계와 사람이 알게 한다.
+    구조화 출력(response_format)·도구 호출은 내용을 건드리면 파싱이 깨지므로 경고 로그만 남긴다.
+    """
+    meta = getattr(response, "response_metadata", None) or {}
+    if meta.get("finish_reason") != "length":
+        return response
+    import logging
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    logging.getLogger(__name__).warning(
+        "LLM 응답이 출력 토큰 한도에서 잘렸습니다 (출력 %s토큰)", usage.get("output_tokens", "?"))
+    structured = "response_format" in kwargs or getattr(response, "tool_calls", None)
+    if not structured and isinstance(response.content, str) and response.content:
+        response.content += TRUNCATED_NOTE
+    return response
+
+
 class NormalizedChatOpenAI(ChatOpenAI):
     """ChatOpenAI with normalized content output and capability-aware binding.
 
@@ -44,7 +68,7 @@ class NormalizedChatOpenAI(ChatOpenAI):
 
         for attempt in range(max_retries):
             try:
-                return normalize_content(super().invoke(input, config, **kwargs))
+                return mark_truncated(normalize_content(super().invoke(input, config, **kwargs)), kwargs)
             except RateLimitError as e:
                 if daily := as_daily_quota(e):
                     raise daily from e  # 하루 한도는 몇 초 기다려도 안 풀림 -> 재시도하지 않음

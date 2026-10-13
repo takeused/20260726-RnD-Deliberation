@@ -15,63 +15,8 @@ import rdagents.graph.review_graph as review_graph_module
 from rdagents.graph.review_graph import RDReviewGraph
 
 
-def _default_instance(schema):
-    """Pydantic 스키마의 필수 필드를 타입별 기본값으로 채운 인스턴스 생성."""
-    values = {}
-    for name, field in schema.model_fields.items():
-        if not field.is_required():
-            continue
-        ann = field.annotation
-        if isinstance(ann, type) and issubclass(ann, enum.Enum):
-            values[name] = list(ann)[0]
-        elif ann is float:
-            values[name] = 100.0
-        elif ann is int:
-            values[name] = 1
-        elif ann is str:
-            values[name] = f"[가짜 {name}]"
-        else:
-            # list 등 컨테이너 타입은 빈 컨테이너 시도
-            try:
-                values[name] = ann()
-            except Exception:
-                values[name] = f"[가짜 {name}]"
-    # 스키마 간 정합성 검증을 만족하는 대표 정상값
-    if schema.__name__ == "BudgetProposal":
-        values["proposed_budget_billion"] = values["original_budget_billion"]
-    elif schema.__name__ == "FinalDecision":
-        values["approved_budget_billion"] = 100.0
-    elif schema.__name__ == "QuestionVerificationReport":
-        from rdagents.agents.schemas import MatchLevel, QuestionMatch
-
-        values["matches"] = [
-            QuestionMatch(actual_question="[실제 질의1]", match_level=MatchLevel.HIT,
-                          matched_prediction="[예측 질의1]", note="논점 일치"),
-            QuestionMatch(actual_question="[실제 질의2]", match_level=MatchLevel.MISS,
-                          matched_prediction=None, note="예측에 없음"),
-        ]
-        values["missed_topics_summary"] = "[가짜 미적중 요약]"
-    elif schema.__name__ == "ReviewPreparationReport":
-        from rdagents.agents.schemas import (
-            AnticipatedQuestion, CriterionTag, ImprovementItem, Severity,
-        )
-
-        def q(criterion):
-            return AnticipatedQuestion(
-                question="[가짜 질의]", criterion=criterion, severity=Severity.HIGH,
-                basis="[가짜 근거]", suggested_answer="[가짜 답변]",
-            )
-
-        values["questions"] = [
-            q(CriterionTag.GOV_SUPPORT), q(CriterionTag.IMPORTANCE),
-            q(CriterionTag.URGENCY), q(CriterionTag.BUDGET), q(CriterionTag.OTHER),
-        ]
-        values["improvements"] = [
-            ImprovementItem(weakness="[가짜 취약점]", severity=Severity.MEDIUM,
-                            recommendation="[가짜 권고]")
-            for _ in range(3)
-        ]
-    return schema(**values)
+# 스키마 기본값 인스턴스는 토큰 추정기와 같은 함수를 쓴다
+from rdagents.dataflows.token_estimate import sample_instance as _default_instance  # noqa: E402
 
 
 def test_budget_schema_rejects_inconsistent_amounts():
@@ -895,6 +840,48 @@ def test_parallel_context_isolation():
 def test_checkpoint_resume():
     run_checkpoint_resume()
 
+
+
+def test_token_estimate_counts_calls_without_api():
+    """추정기는 API 없이 그래프를 끝까지 돌려 노드별 호출을 세고, 도구 상한·체크포인트 진행을 반영한다."""
+    import tempfile
+
+    from rdagents.dataflows import token_estimate as te
+    from rdagents.default_config import DEFAULT_CONFIG
+
+    root = Path(tempfile.mkdtemp(prefix="rdagents_est_"))
+    config = {**DEFAULT_CONFIG, "checkpoint_path": str(root / "none.sqlite"), "prompt_char_budget": 1200,
+              "max_analyst_tool_calls": 2}
+    est = te.estimate(config, dict(project_id="quantum_computing"))
+    nodes = {c.node for c in est.calls}
+    assert {"Tech Value Analyst", "Panel Examiner", "Final Approver", "Question Extractor"} <= nodes
+    tech = [c.kind for c in est.calls if c.node == "Tech Value Analyst"]
+    assert tech == ["도구 턴", "도구 턴", "보고서"]                 # 상한 2 -> 도구 2번 뒤 보고서
+    assert all(c.input_tokens > 0 for c in est.calls) and not est.skipped
+    assert not any(c.retry for c in est.calls)                      # 가짜 응답이 검증을 통과 (재시도 없음)
+    assert [c.kind for c in est.calls if c.node == "Final Approver"] == ["구조화"]
+    out = te.render(est, tpm=8000, tpd=200000)
+    assert "남은 호출" in out and "분당 한도 8,000 안" in out
+    assert "⚠️" in te.render(est, tpm=100, tpd=200000)               # 분당 한도보다 큰 요청 표시
+
+    # 체크포인트: 보고서가 저장된 분석가와 이미 실행된 노드는 남은 부분에서 뺀다
+    state = {"tech_value_report": "끝", "execution_metrics": [{"node": "Panel Examiner", "total_tokens": 10}]}
+    done = te._done(est.calls, state)
+    skipped = {c.node for c, d in zip(est.calls, done) if d}
+    assert skipped == {"Tech Value Analyst", "Panel Examiner"}
+    assert sum(d for c, d in zip(est.calls, done) if c.node == "Panel Examiner") == 1   # 2번 중 1번만 끝남
+
+
+def test_truncated_response_is_marked():
+    """출력 한도에서 끊긴 글 응답에는 잘림 표시, 구조화 출력·도구 호출은 그대로 둔다."""
+    from rdagents.llm_clients.openai_client import TRUNCATED_NOTE, mark_truncated
+
+    cut = AIMessage(content="연쇄 영향 분석 엔진은 학제", response_metadata={"finish_reason": "length"})
+    assert mark_truncated(cut, {}).content.endswith(TRUNCATED_NOTE)
+    done = AIMessage(content="완결된 보고서.", response_metadata={"finish_reason": "stop"})
+    assert mark_truncated(done, {}).content == "완결된 보고서."
+    js = AIMessage(content='{"verdict": "승', response_metadata={"finish_reason": "length"})
+    assert mark_truncated(js, {"response_format": {}}).content == '{"verdict": "승'
 
 if __name__ == "__main__":
     run_smoke()

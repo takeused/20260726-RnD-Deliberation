@@ -40,6 +40,11 @@ python main.py --project quantum_computing
 # 분석가 1명의 도구 호출을 3번으로 제한합니다(RDAGENTS_MAX_ANALYST_TOOL_CALLS). 환경변수가 프로필보다 우선합니다.
 python main.py --project quantum_computing --profile test-groq
 
+# 실행 전 토큰 추정 (API 호출 없음): 가짜 LLM으로 그래프를 한 번 돌려 노드별 요청 크기와 총 토큰을 셈
+# 요청 하나가 분당 한도를 넘는지(넘으면 413), 하루 한도 안에 끝나는지 미리 확인. 한도는 RDAGENTS_TPM_LIMIT/RDAGENTS_TPD_LIMIT
+# --execution-id를 주면 체크포인트에서 이어서 실행할 남은 부분만 셈
+python main.py --report "기획보고서.md" --profile test-groq --estimate-tokens [--execution-id ID]
+
 # 실행 (기획보고서 원문 모드 — .md/.txt, HWP는 md로 변환 후 투입)
 python main.py --report "내사업_기획보고서.md"
 
@@ -100,6 +105,9 @@ LangGraph 실행 이력을 기준으로 재개할 수 있습니다. LLM 공급�
 걸리면 몇 초 간격 재시도를 하지 않고 즉시 멈춘 뒤(종료 코드 3) 대기 시간과 이어서 실행할 명령을 안내합니다.
 분당 한도는 기존처럼 잠시 기다렸다 재시도합니다. 실행 관측성에는 공급자가 응답에 제공한 토큰 메타데이터만
 기록하며, 가격은 시점·계약별 차이가 있어 별도 가격표가 없으면 비용을 임의 계산하지 않습니다.
+
+응답이 출력 토큰 한도에서 끊기면(`finish_reason=length`) 경고를 남기고, 글 응답 끝에 "[출력 토큰 한도에 걸려 여기서
+잘렸습니다]"를 붙여 뒤 단계와 사람이 잘린 것을 알게 합니다 (gpt-oss는 추론 토큰도 출력 한도를 씀).
 
 구조화 출력(심의 의견·예산안·최종 결정·예상 질의 등)이 스키마 검증에 실패하면 오류 내용을 피드백하여
 자동 재시도하고, 그래도 실패하면 자유 텍스트 폴백으로 이어집니다. 폴백으로 끝난 결정은 재심의

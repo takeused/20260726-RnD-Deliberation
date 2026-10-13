@@ -135,6 +135,12 @@ def main():
         help="심의 대상 연도",
     )
     parser.add_argument(
+        "--estimate-tokens",
+        action="store_true",
+        help="LLM을 부르지 않고 노드별 요청 크기와 총 토큰을 추정합니다 (분당·하루 한도 확인). "
+             "--execution-id를 주면 체크포인트에서 이어서 실행할 남은 부분만 셉니다.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="디버그 출력 활성화",
@@ -158,6 +164,20 @@ def main():
         overrides["llm_provider"] if overrides and "llm_provider" in overrides
         else os.getenv("RDAGENTS_LLM_PROVIDER", "groq")
     )
+    # 토큰 추정 모드: API 키 없이 가짜 LLM으로 요청 크기만 센다
+    if args.estimate_tokens:
+        from rdagents.dataflows.token_estimate import estimate, render
+        from rdagents.default_config import DEFAULT_CONFIG
+
+        config = {**DEFAULT_CONFIG, **(overrides or {})}
+        est = estimate(config, dict(
+            project_id=args.project, review_year=args.year, report_path=args.report,
+            report_project_id=args.report_project_id, evidence_paths=args.evidence,
+        ), execution_id=args.execution_id)
+        print(render(est, tpm=int(os.getenv("RDAGENTS_TPM_LIMIT", "8000")),
+                     tpd=int(os.getenv("RDAGENTS_TPD_LIMIT", "200000"))))
+        return 0
+
     auth_error = _validate_provider_auth(provider)
     if auth_error:
         print(f"오류: {auth_error}", file=sys.stderr)
