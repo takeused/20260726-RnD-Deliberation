@@ -105,6 +105,37 @@ def test_citation_content_check_flags_wrong_line(tmp_path):
     assert "`01a.md` L2 → `대조.md` L1-L1" in text
 
 
+def test_citation_variants_from_gpt_oss_are_resolved(tmp_path):
+    """gpt-oss식 출처 표기(비슷한 하이픈, '…'로 줄인 파일명, 앞부분만 쓴 파일명)를 입력 파일로 해석하고,
+    내용 대조 오탐(법조문 '제2조', 표의 숫자 칸, 한 줄 여러 출처, 코드가 만든 사전 점검)을 줄인다."""
+    from rdagents.dataflows.output_validation import build_validation_report, resolve_source
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "(NDMI-기본-2025-20)+재난+피해+연쇄적+영향평가.md"
+    report.write_text("「자연재해대책법」 제2조제3호에 따른 풍수해를 대상으로 한다.\n"
+                      "수집된 7,045건의 기사 중 중복을 제외하였다.\n"
+                      "복구비는 251.6% 증가하였다.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="variants")
+    name = report.name
+    known = {name: 3}
+    assert resolve_source("(NDMI‑기본‑2025‑20)…", known) == (name, True)       # U+2011 하이픈 + 줄임표
+    assert resolve_source("(NDMI-기본-2025-20)", known) == (name, True)         # 줄임표 없이 앞부분만
+    assert resolve_source("(NDMI…", known) == (name, True)
+    assert resolve_source("(N", known) == (None, False)                          # 너무 짧으면 해석하지 않음
+    assert resolve_source("다른파일.md", known) == (None, False)
+
+    text = build_validation_report({
+        "01a.md": "풍수해 대상 범위 [출처: (NDMI‑기본‑2025‑20)… L1‑L1]\n"
+                  "대응시간 30% 감소 [출처: (NDMI-기본-2025-20) L3-L3]\n",           # 원문에 없는 수치
+        "09.md": "| 기술적 실현 가능성 | 15% | 55.0 | 복구비 증가 추세 [출처: (NDMI-기본-2025-20)… L3-L3] |\n",
+        "02.md": "| 풍수해, 7,045건 | [출처: (NDMI-기본-2025-20)… L1-L1]; [출처: (NDMI-기본-2025-20)… L2-L2] |\n",
+        "00b_사전점검.md": "| 시급성 | 2조 | [출처: (NDMI-기본-2025-20)… L3-L3] |\n",
+    })
+    assert "**출처 검증 이슈 수**: 0" in text
+    assert "**형식·범위가 유효한 출처 인용 수**: 6 (그중 줄여 쓴 파일명을 입력 파일로 해석한 것 6)" in text
+    assert "**출처 내용 대조 확인 권고 수**: 2" in text            # "30% 감소" 한 문장 (수치·단어 두 사유)
+    assert text.count("`01a.md` L2 →") == 2 and "인용 줄에 없는 수치 30%" in text
+
 def test_preparation_report_requires_budget_question():
     """예상 질의에 예산 타당성 질의가 없으면 3대 기준과 똑같이 검증 오류(-> 구조화 재시도)."""
     import pytest
