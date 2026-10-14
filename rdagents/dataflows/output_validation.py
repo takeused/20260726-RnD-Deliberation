@@ -99,6 +99,7 @@ def check_citation_content(claim_line: str, cited_text: str) -> list[str]:
 _NOT_LLM_TEXT = _CODE_GENERATED | {"12_실행관측성.md", "07b_예상질의.json"}
 UNSUPPORTED_NOTE = "⚠️[원문에 없는 수치: {}]"
 _NUMBER_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)(.*)$")
+_MARK_RE = re.compile(r"\s*⚠️\[원문에 없는 수치: [^\]]*\]")
 
 
 def _split_number(token: str) -> tuple[float, int, str]:
@@ -175,7 +176,8 @@ def build_validation_report(documents: Mapping[str, str],
     valid, abbreviated, citation_issues, unverified, content_flags = 0, 0, [], [], []
     for filename, content in documents.items():
         for line_no, raw_line in enumerate(content.splitlines(), 1):
-            line = normalize_citation_text(raw_line)
+            # 본문에 붙인 '원문에 없는 수치' 표시는 검사에서 뺀다 (표시 속 숫자가 미확인 문장 검사에 다시 걸렸음)
+            line = normalize_citation_text(_MARK_RE.sub("", raw_line))
             resolved_spans, cited_parts = [], []
             for match in _CITATION_RE.finditer(line):
                 written = match.group("source").strip()

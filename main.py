@@ -138,6 +138,19 @@ def main():
         help="심의 대상 연도",
     )
     parser.add_argument(
+        "--rerender",
+        action="store_true",
+        help="LLM 없이 --run-dir의 저장된 산출물로 검증보고서(14)·원문에 없는 수치 표시·HTML 리포트를 지금 코드로 "
+             "다시 만듭니다. 입력 원문(--report, --evidence)이 필요합니다.",
+    )
+    parser.add_argument(
+        "--compare-runs",
+        nargs=2,
+        metavar=("RUN_DIR_A", "RUN_DIR_B"),
+        default=None,
+        help="두 실행 결과 폴더를 같은 지표(잘린 응답·인용·원문에 없는 수치·예상 질의·토큰)로 비교합니다.",
+    )
+    parser.add_argument(
         "--estimate-tokens",
         action="store_true",
         help="LLM을 부르지 않고 노드별 요청 크기와 총 토큰을 추정합니다 (분당·하루 한도 확인). "
@@ -167,6 +180,24 @@ def main():
         overrides["llm_provider"] if overrides and "llm_provider" in overrides
         else os.getenv("RDAGENTS_LLM_PROVIDER", "groq")
     )
+    # 결과 비교·다시 만들기 모드: LLM 호출 없음
+    if args.compare_runs:
+        from rdagents.dataflows.run_compare import render as render_comparison
+
+        print(render_comparison(*args.compare_runs))
+        return 0
+    if args.rerender:
+        if not args.run_dir or not args.report:
+            print("오류: --rerender에는 --run-dir과 --report(그 실행의 입력 원문)가 필요합니다.", file=sys.stderr)
+            return 2
+        from rdagents.dataflows.project_loader import set_current_report
+        from rdagents.dataflows.result_writer import rerender_results
+
+        set_current_report(args.report, args.report_project_id, evidence_paths=args.evidence)
+        out = rerender_results(args.run_dir, review_year=args.year)
+        print(f"다시 만듦: {out / '14_검증보고서.md'}, {out / '심의종합리포트.html'}")
+        return 0
+
     # 토큰 추정 모드: API 키 없이 가짜 LLM으로 요청 크기만 센다
     if args.estimate_tokens:
         from rdagents.dataflows.token_estimate import estimate, render

@@ -45,6 +45,13 @@ python main.py --project quantum_computing --profile test-groq
 # --execution-id를 주면 체크포인트에서 이어서 실행할 남은 부분만 셈
 python main.py --report "기획보고서.md" --profile test-groq --estimate-tokens [--execution-id ID]
 
+# 저장된 결과를 LLM 없이 지금 코드로 다시 렌더링 (검증보고서·원문에 없는 수치 표시·HTML). 검증 규칙을 고친 뒤 지난 결과에 적용
+python main.py --rerender --run-dir "results/{사업ID}/{실행ID}" --report "기획보고서.md" [--evidence ...]
+
+# 두 실행 결과를 같은 지표로 비교 (잘린 응답, 유효 인용, 원문에 없는 수치, 예상 질의 수·기준, 숫자 검산 반영, 토큰)
+# 공정하게 비교하려면 두 폴더를 먼저 --rerender로 같은 검증 기준에 맞춘다
+python main.py --compare-runs "results/.../실행A" "results/.../실행B"
+
 # 실행 (기획보고서 원문 모드 — .md/.txt, HWP는 md로 변환 후 투입)
 python main.py --report "내사업_기획보고서.md"
 

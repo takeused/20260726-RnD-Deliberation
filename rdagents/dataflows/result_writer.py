@@ -313,16 +313,41 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         for item in bottlenecks
     )
     write("12_실행관측성.md", "\n".join(observation))
-    documents_for_validation = {
+    _validate_and_render(out_dir, project_id, metadata)
+
+    return out_dir
+
+
+def _validate_and_render(out_dir: Path, project_id: str, metadata: dict) -> None:
+    """저장된 산출물로 원문에 없는 수치 표시, 검증보고서(14), HTML 리포트를 만든다 (LLM 호출 없음)."""
+    documents = {
         filename: (out_dir / filename).read_text(encoding="utf-8")
         for filename, _ in _REPORT_FILES
-        if (out_dir / filename).exists()
+        # 다시 만들 때 이전 검증보고서가 자기 자신을 검사하지 않게 (미확인 문장 수가 8 -> 18로 부풀었음)
+        if (out_dir / filename).exists() and filename != "14_검증보고서.md"
     }
     # 원문에 없는 수치는 산출물 본문에 바로 표시한다 (검증보고서와 HTML 리포트도 표시된 본문을 쓴다)
-    documents_for_validation, number_marks = mark_unsupported_numbers(documents_for_validation)
+    documents, number_marks = mark_unsupported_numbers(documents)
     for filename in {f for f, _, _ in number_marks}:
-        write(filename, documents_for_validation[filename])
-    write("14_검증보고서.md", build_validation_report(documents_for_validation, number_marks))
+        (out_dir / filename).write_text(documents[filename], encoding="utf-8")
+    (out_dir / "14_검증보고서.md").write_text(build_validation_report(documents, number_marks), encoding="utf-8")
     _write_html_report(out_dir, project_id, metadata)
 
+
+def rerender_results(run_dir: str, review_year: str = "") -> Path:
+    """이미 저장된 실행 결과의 검증보고서·HTML 리포트를 지금 코드로 다시 만든다 (LLM 호출 없음).
+
+    검증 규칙을 고친 뒤 지난 실행 결과에 다시 적용하거나 두 실행을 같은 기준으로 비교할 때 쓴다.
+    입력 원문은 호출 전에 set_current_report로 지정해 두어야 한다 (출처 줄 범위·원문 수치 대조에 필요).
+    """
+    out_dir = Path(run_dir)
+    observation = (out_dir / "12_실행관측성.md").read_text(encoding="utf-8") \
+        if (out_dir / "12_실행관측성.md").exists() else ""
+    metadata = {
+        "execution_id": _find_label(observation, "실행 ID"),
+        "provider": _find_label(observation, "프로바이더"),
+        "deep_model": _find_label(observation, "Deep 모델"),
+        "review_year": review_year or "알 수 없음",
+    }
+    _validate_and_render(out_dir, out_dir.parent.name, metadata)
     return out_dir

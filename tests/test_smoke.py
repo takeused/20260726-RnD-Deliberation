@@ -200,6 +200,38 @@ def test_question_extractor_short_output_note(monkeypatch):
     qe.create_question_extractor(None)({**state, "prompt_char_budget": 0})
     assert "출력 길이 제한" not in captured["system"]
 
+def test_rerender_and_compare_runs(tmp_path):
+    """저장된 결과를 LLM 없이 다시 렌더링하고(이전 검증보고서는 검사 대상에서 제외), 두 실행을 같은 지표로 비교한다."""
+    from rdagents.dataflows.project_loader import set_current_report
+    from rdagents.dataflows.result_writer import rerender_results
+    from rdagents.dataflows.run_compare import collect, render
+
+    review_graph_module.create_llm_client = lambda **kwargs: _StubClient(FakeLLM())
+    report_path = tmp_path / "보고서.md"
+    report_path.write_text("# 기획보고서\n\n총 예산 450억원, 5년. 사망 6명.\n", encoding="utf-8")
+    graph = RDReviewGraph(config={"results_dir": str(tmp_path / "logs"), "memory_log_path": str(tmp_path / "m.md")})
+    state, _ = graph.propagate(report_path=str(report_path), review_year="2027")
+    graph.close()
+    run = Path(state["saved_results_dir"])
+
+    before = collect(str(run))
+    assert before["LLM 호출 수"] > 10                             # 가짜 응답의 예산 100.0억도 원문에 없어 표시됨
+
+    # 산출물을 바꾼 뒤 다시 렌더링하면 새 규칙이 적용되고 HTML도 다시 만들어진다
+    analysis = run / "01a_분석_기술가치.md"
+    analysis.write_text(analysis.read_text(encoding="utf-8") + "\n대응시간 30% 감소 [확인 필요: 근거]\n", encoding="utf-8")
+    set_current_report(str(report_path))
+    rerender_results(str(run), review_year="2027")
+    rerender_results(str(run), review_year="2027")                 # 두 번 해도 결과 같음 (자기 검사·중복 표시 없음)
+    after = collect(str(run))
+    assert after["원문에 없는 수치 표시 줄"] == before["원문에 없는 수치 표시 줄"] + 1
+    assert after["미확인 사실형 문장"] == before["미확인 사실형 문장"] + 1
+    assert "⚠️[원문에 없는 수치: 30%]" in (run / "심의종합리포트.html").read_text(encoding="utf-8")
+
+    table = render(str(run), str(run))
+    n = after["원문에 없는 수치 표시 줄"]
+    assert f"| 원문에 없는 수치 표시 줄 | {n} | {n} | 같음 |" in table
+
 def test_preparation_report_requires_budget_question():
     """예상 질의에 예산 타당성 질의가 없으면 3대 기준과 똑같이 검증 오류(-> 구조화 재시도)."""
     import pytest
