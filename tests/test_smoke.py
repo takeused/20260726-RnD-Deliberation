@@ -136,6 +136,70 @@ def test_citation_variants_from_gpt_oss_are_resolved(tmp_path):
     assert "**출처 내용 대조 확인 권고 수**: 2" in text            # "30% 감소" 한 문장 (수치·단어 두 사유)
     assert text.count("`01a.md` L2 →") == 2 and "인용 줄에 없는 수치 30%" in text
 
+def test_unsupported_numbers_are_marked_in_body(tmp_path):
+    """LLM 산출물에서 입력 원문에 없는 수치가 든 줄 끝에 표시를 붙인다. 반올림 값·0·표 숫자 칸·코드가 만든 파일은 제외,
+    표 줄은 마지막 칸 안에 넣고, 다시 돌려도 두 번 붙이지 않는다."""
+    from rdagents.dataflows.output_validation import UNSUPPORTED_NOTE, build_validation_report, mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("복구비는 251.6% 증가하였다. 사망 6명, 재산피해 2,150억 원.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="marks")
+    docs = {
+        "01a.md": "재산피해 2,150억 원, 복구비 252% 증가\n"                 # 원문 값과 반올림 값 -> 통과
+                  "대응시간 30% 감소 [출처: 원문.md L1-L1]\n",             # 원문에 없음 -> 표시
+        "02.md": "| 기대효과 | 인명 피해 15명 감소 |\n",                      # 표 줄
+        "04.md": "**원래 요청 예산**: 0.0억원\n",                           # 0은 통과
+        "09.md": "| 기술적 실현 가능성 | 15% | 55.0 | 근거 서술 |\n",          # 숫자만 있는 칸은 통과
+        "00b_사전점검.md": "| 시급성 | 99% |\n",                            # 코드가 만든 파일
+    }
+    marked, found = mark_unsupported_numbers(docs)
+    assert found == [("01a.md", 2, ["30%"]), ("02.md", 1, ["15명"])]
+    assert marked["01a.md"].splitlines()[1].endswith(UNSUPPORTED_NOTE.format("30%"))
+    assert marked["02.md"] == "| 기대효과 | 인명 피해 15명 감소 " + UNSUPPORTED_NOTE.format("15명") + " |\n"
+    assert marked["00b_사전점검.md"] == docs["00b_사전점검.md"]
+    assert mark_unsupported_numbers(marked)[1] == []                     # 이미 표시한 줄은 다시 안 붙임
+    text = build_validation_report(marked, found)
+    assert "**원문에 없는 수치를 본문에 표시한 줄 수**: 2" in text and "`02.md` L1: 15명" in text
+
+def test_precheck_includes_number_crosscheck():
+    """사전 점검에 숫자 검산(표 합계·비율·본문 합계)이 붙고, 불일치는 패널·질의 요약에 최대 3건 올라간다."""
+    from rdagents.dataflows.plan_precheck import run_precheck
+
+    text = "\n".join([
+        "## 사업 규모",
+        "- 총 사업비: 120억 원 (1차년도 30억, 2차년도 50억, 3차년도 45억)",
+        "(단위: 백만원, %)",
+        "|구분|피해액|비율|", "|---|---|---|",
+        "|가|600|60.0|", "|나|300|30.0|", "|다|170|10.0|", "|총계|1,000|100.0|",
+    ])
+    full, brief = run_precheck(text, "a.md")
+    assert "## 숫자 검산" in full and "| 본문 합계 |" in full and "[출처: a.md L2-L2]" in full
+    assert "[숫자 검산] 원인 칸 추정" in brief                     # 원인 칸 추정을 먼저
+    assert brief.count("[숫자 검산]") == 3                          # 불일치 4건 이상이어도 3건까지
+    clean, clean_brief = run_precheck("- 총 사업비: 120억 원 (1차년도 70억, 2차년도 50억)", "b.md")
+    assert "불일치 0건" in clean and "[숫자 검산]" not in clean_brief
+
+
+def test_question_extractor_short_output_note(monkeypatch):
+    """짧은 문맥 모드면 예상 질의 개수·답변 길이를 줄이라는 지시가 붙는다 (출력 상한에서 JSON이 잘리지 않게)."""
+    from rdagents.agents.managers import question_extractor as qe
+
+    captured = {}
+
+    def fake_invoke(llm, schema, prompt_val, name, **kw):
+        captured["system"] = prompt_val.to_messages()[0].content
+        from rdagents.agents.utils.structured import StructuredCallResult
+        return StructuredCallResult(_default_instance(schema))
+
+    monkeypatch.setattr(qe, "invoke_structured_model", fake_invoke)
+    monkeypatch.delenv("RDAGENTS_PROMPT_CHAR_BUDGET", raising=False)
+    state = {"review_debate_state": {"history": ""}, "audit_debate_state": {"history": ""}, "prompt_char_budget": 900}
+    qe.create_question_extractor(None)(state)
+    assert "출력 길이 제한" in captured["system"]
+    qe.create_question_extractor(None)({**state, "prompt_char_budget": 0})
+    assert "출력 길이 제한" not in captured["system"]
+
 def test_preparation_report_requires_budget_question():
     """예상 질의에 예산 타당성 질의가 없으면 3대 기준과 똑같이 검증 오류(-> 구조화 재시도)."""
     import pytest
@@ -189,7 +253,7 @@ def test_groq_profile_uses_short_context_and_json_schema():
 
     profile = main.PROFILES["test-groq"]
     assert profile["llm_provider"] == "groq"
-    assert profile["prompt_char_budget"] == 1200
+    assert profile["prompt_char_budget"] == 900
     assert get_capabilities(profile["deep_think_llm"]).preferred_structured_method == "json_schema"
     assert "test-cerebras" not in main.PROFILES  # Cerebras는 정책 변경으로 쓰지 않음
     assert main._validate_provider_auth("groq") in (None, "groq 프로바이더에 필요한 GROQ_API_KEY가 설정되어 있지 않습니다.")

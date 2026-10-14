@@ -157,5 +157,14 @@ def run_precheck(report_text: str | None, source: str | None) -> tuple[str, str]
     """(전체 점검표, 지시문용 요약). 원문 모드가 아니면 둘 다 빈 문자열."""
     if not report_text or not source:
         return "", ""
-    results = check_lines(report_text.splitlines())
-    return render_precheck(results, source), precheck_brief(results, source)
+    from rdagents.dataflows import budget_check
+
+    lines = report_text.splitlines()
+    results = check_lines(lines)
+    numbers = budget_check.check(lines)  # 표·본문 숫자가 서로 맞는지 (합계·비율·단가×수량·증감률)
+    full = render_precheck(results, source) + "\n\n" + budget_check.render_section(numbers, source)
+    brief_parts = [precheck_brief(results, source)]
+    if numbers.findings:
+        brief_parts.append("숫자 검산(코드 계산)에서 서로 맞지 않는 수치가 나왔습니다. 원문을 확인하고 질의하세요:\n"
+                           + "\n".join(budget_check.brief_lines(numbers, source)))
+    return full, "\n\n".join(p for p in brief_parts if p)

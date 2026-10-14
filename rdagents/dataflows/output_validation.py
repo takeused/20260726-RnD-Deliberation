@@ -95,7 +95,74 @@ def check_citation_content(claim_line: str, cited_text: str) -> list[str]:
     return reasons
 
 
-def build_validation_report(documents: Mapping[str, str]) -> str:
+# 원문에 없는 수치를 본문에 표시할 때 건너뛰는 파일: 코드가 만든 파일과 구조화 데이터
+_NOT_LLM_TEXT = _CODE_GENERATED | {"12_실행관측성.md", "07b_예상질의.json"}
+UNSUPPORTED_NOTE = "⚠️[원문에 없는 수치: {}]"
+_NUMBER_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)(.*)$")
+
+
+def _split_number(token: str) -> tuple[float, int, str]:
+    """'251.6%' -> (251.6, 소수 1자리, '%')."""
+    m = _NUMBER_UNIT_RE.match(token)
+    digits = m.group(1)
+    return float(digits), len(digits.split(".")[1]) if "." in digits else 0, m.group(2)
+
+
+def source_number_index(source_texts: Mapping[str, list[str]]) -> dict[str, list[float]]:
+    """입력 원문(사업보고서·외부근거)에 나오는 단위 붙은 수치를 단위별로 모은다."""
+    index: dict[str, list[float]] = {}
+    for lines in source_texts.values():
+        for token in _numbers("\n".join(lines)):
+            value, _, unit = _split_number(token)
+            index.setdefault(unit, []).append(value)
+    return index
+
+
+def unsupported_numbers(line: str, index: Mapping[str, list[float]]) -> list[str]:
+    """줄의 단위 붙은 수치 중 입력 원문 어디에도 없는 것. 원문 값을 반올림한 수치(251.6% -> 251%)와 0은 통과."""
+    if UNSUPPORTED_NOTE.split("{")[0] in line:
+        return []  # 이미 표시한 줄 (다시 실행해도 두 번 붙이지 않음)
+    claim = _claim_text(_CITATION_RE.sub("", normalize_citation_text(line)))
+    out = []
+    for token in sorted(_numbers(claim)):
+        value, decimals, unit = _split_number(token)
+        if value == 0:
+            continue
+        tolerance = 0.5 * 10 ** -decimals + 1e-9
+        if not any(abs(value - v) <= tolerance for v in index.get(unit, [])):
+            out.append(token)
+    return out
+
+
+def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, str], list[tuple[str, int, list[str]]]]:
+    """LLM이 쓴 산출물에서 입력 원문에 없는 수치가 든 줄 끝에 표시를 붙인다. (표시한 문서들, [(파일, 줄, 수치)]).
+
+    NDMI 실행에서 "대응시간 30% 감소", "추가 재산 피해 1,200억 원" 같은 원문에 없는 수치가 출처까지 달린 채
+    분석 보고서와 공방에 들어갔다. 검증보고서에만 나열하면 산출물을 읽는 사람은 사실로 받아들이므로 본문에 표시한다.
+    """
+    index = source_number_index(get_source_lines())
+    marked, found = dict(documents), []
+    if not index:
+        return marked, found  # 원문 모드가 아니면(샘플 JSON) 대조할 원문이 없음
+    for filename, content in documents.items():
+        if filename in _NOT_LLM_TEXT:
+            continue
+        lines = content.splitlines()
+        for i, line in enumerate(lines):
+            missing = unsupported_numbers(line, index)
+            if not missing:
+                continue
+            found.append((filename, i + 1, missing))
+            note = UNSUPPORTED_NOTE.format(", ".join(missing))
+            stripped = line.rstrip()
+            # 표 줄은 마지막 칸 안에 넣어야 표가 깨지지 않는다
+            lines[i] = f"{stripped[:-1].rstrip()} {note} |" if stripped.endswith("|") else f"{stripped} {note}"
+        marked[filename] = "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+    return marked, found
+
+
+def build_validation_report(documents: Mapping[str, str],
+                            number_marks: list[tuple[str, int, list[str]]] | None = None) -> str:
     """출처 형식·줄 범위와 미확인 사실형 문장을 별도 감사 보고서로 만든다."""
     source_lines = get_source_line_counts()
     source_texts = get_source_lines()
@@ -158,16 +225,23 @@ def build_validation_report(documents: Mapping[str, str]) -> str:
         f"- **형식·범위가 유효한 출처 인용 수**: {valid} (그중 줄여 쓴 파일명을 입력 파일로 해석한 것 {abbreviated})",
         f"- **출처 검증 이슈 수**: {len(citation_issues)}",
         f"- **미확인 사실형 문장 수**: {len(unverified)}",
-        f"- **출처 내용 대조 확인 권고 수**: {len(content_flags)}", "", "## 출처 검증 이슈", "",
+        f"- **출처 내용 대조 확인 권고 수**: {len(content_flags)}",
+        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}", "", "## 출처 검증 이슈", "",
         *(citation_issues or ["- 없음"]), "", "## 미확인 사실형 문장 (심의 제출 전 삭제·근거 보강 필요)", "",
         *(unverified or ["- 없음"]), "",
         "## 출처 내용 대조 확인 권고 (범위는 맞지만 인용 줄과 내용이 다를 수 있음)", "",
-        *(content_flags or ["- 없음"]), "", "## 판정 기준", "",
+        *(content_flags or ["- 없음"]), "",
+        "## 원문에 없는 수치 (산출물 본문의 해당 줄 끝에 ⚠️ 표시)", "",
+        *([f"- `{f}` L{n}: {', '.join(nums)}" for f, n, nums in number_marks or []] or ["- 없음"]), "",
+        "## 판정 기준", "",
         "- 입력 원문에 존재하는 파일명과 줄 범위만 자동 검증합니다. 비슷한 하이픈 문자는 '-'로 맞추고, "
         "'…'로 줄인 파일명은 앞부분이 입력 파일 하나와만 맞을 때 그 파일로 봅니다.",
         "- 내용 대조는 문장의 수치(단위 포함)가 인용 줄에 있는지, 공유 단어가 있는지만 봅니다. "
         "한 줄에 출처가 여럿이면 인용 줄을 모두 합쳐 대조하고, 코드가 만든 파일(사전 점검 등)은 대조하지 않습니다. "
         "경험적 검사이므로 검증 상태에는 반영하지 않고 원문 대조 대상만 표시합니다.",
+        "- 원문에 없는 수치: LLM이 쓴 산출물의 단위 붙은 수치(%, 억 원, 명 등)가 입력 원문 어디에도 없으면 본문에 표시합니다. "
+        "원문 값을 반올림한 수치와 0은 통과시키고, 표의 숫자만 있는 칸(가중치·점수)은 보지 않습니다. "
+        "질의의 예시 목표치(\"예: 10% 절감\")도 표시되므로, 원문 근거가 아니라는 뜻으로 읽으세요.",
         "- 의미적 진실성은 자동 확정하지 않으므로 심의 제출 전 원문 대조가 필요합니다.",
         "- `[확인 필요: ...]`는 미확인 사실을 정당화하지 않습니다. 구체 수치·기관·협약은 근거를 첨부하거나 삭제해야 합니다.",
     ])

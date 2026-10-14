@@ -13,7 +13,7 @@ from rdagents.agents.schemas import (
     render_anticipated_questions,
     render_improvements,
 )
-from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import _setting, clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.agents.utils.structured import invoke_structured_model
 
@@ -25,6 +25,14 @@ _REPORT_SECTIONS = [
     ("feasibility_report", "수행체계 분석"),
     ("regulatory_report", "규제/윤리 검토"),
 ]
+
+
+# 짧은 문맥 모드(prompt_char_budget > 0)에서는 출력도 줄인다. Groq 무료 등급 NDMI 실행에서 이 노드 출력이
+# 2,988토큰으로 출력 상한(3,072)에 거의 닿았고, 앞선 시도에서는 JSON이 상한에서 잘려 실패했다.
+_SHORT_OUTPUT_NOTE = (
+    "\n\n**출력 길이 제한 (짧은 문맥 모드)**: 위의 개수 대신 예상 질의 5~7개, 보완 권고 3~5개만 작성하고, "
+    "권장 답변 초안과 출제 근거는 각각 2문장 이내로 쓰세요."
+)
 
 
 def create_question_extractor(llm):
@@ -46,6 +54,7 @@ def create_question_extractor(llm):
             + get_review_criteria()
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
+            + _SHORT_OUTPUT_NOTE * bool(_setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET"))
         )
 
         prompt = ChatPromptTemplate.from_messages([

@@ -18,7 +18,7 @@ from rdagents.agents.schemas import (
     render_final_decision,
     render_review_plan,
 )
-from rdagents.dataflows.output_validation import build_validation_report
+from rdagents.dataflows.output_validation import build_validation_report, mark_unsupported_numbers
 
 _ANALYST_FILES = [
     ("tech_value_report", "01a_분석_기술가치.md"),
@@ -318,7 +318,11 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         for filename, _ in _REPORT_FILES
         if (out_dir / filename).exists()
     }
-    write("14_검증보고서.md", build_validation_report(documents_for_validation))
+    # 원문에 없는 수치는 산출물 본문에 바로 표시한다 (검증보고서와 HTML 리포트도 표시된 본문을 쓴다)
+    documents_for_validation, number_marks = mark_unsupported_numbers(documents_for_validation)
+    for filename in {f for f, _, _ in number_marks}:
+        write(filename, documents_for_validation[filename])
+    write("14_검증보고서.md", build_validation_report(documents_for_validation, number_marks))
     _write_html_report(out_dir, project_id, metadata)
 
     return out_dir
