@@ -13,6 +13,7 @@ from pathlib import Path
 
 OUTPUT_CAP = 3072          # Groq 기본 출력 상한 (출력 토큰이 이 값이면 잘린 응답)
 LLM_FILES = ("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11")
+_SPACES_RE = re.compile(r"[    ]")
 
 
 def _read(run: Path, name: str) -> str:
@@ -53,8 +54,9 @@ def collect(run_dir: str) -> dict[str, object]:
     numbers_section = precheck.split("## 숫자 검산", 1)[1] if "## 숫자 검산" in precheck else ""
     mismatch = re.search(r"불일치\s*(\d+)건", numbers_section)
     table_ids = set(re.findall(r"표\s*\d+(?:\.\d+)*", numbers_section.split("- 숫자가 서로")[0]))
-    reflected = sum(1 for name in ("02_심사공방_전문.md", "07_예상질의응답.md")
-                    for line in _read(run, name).splitlines()
+    # gpt-oss는 '표 1.1'의 공백을 좁은 공백(U+202F)으로 쓰기도 한다 (groq4 실행에서 언급 5줄이 0으로 집계됐음)
+    reflected = sum(1 for name in ("02_심사공방_전문.md", "07_예상질의응답.md", "08_보완권고.md")
+                    for line in _SPACES_RE.sub(" ", _read(run, name)).splitlines()
                     if any(t in line for t in table_ids)) if table_ids else 0
 
     decision = re.search(r"\*\*최종 심의 결정\*\*:\s*(\S+)", _read(run, "06_최종결정.md"))

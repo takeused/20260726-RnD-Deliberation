@@ -199,6 +199,35 @@ def test_question_extractor_short_output_note(monkeypatch):
     assert "출력 길이 제한" in captured["system"]
     qe.create_question_extractor(None)({**state, "prompt_char_budget": 0})
     assert "출력 길이 제한" not in captured["system"]
+    assert "숫자 검산 불일치 반영" not in captured["system"]
+    # 사전 점검이 숫자 불일치를 찾았으면 질의·권고에 반드시 넣으라는 지시가 붙는다
+    qe.create_question_extractor(None)({**state, "precheck_brief": "- [숫자 검산] 비율: 표 1.1 — 적힌 값 0.3%"})
+    assert "숫자 검산 불일치 반영" in captured["system"]
+
+
+def test_more_citation_variants_from_gpt_oss(tmp_path):
+    """groq4 실행에서 나온 표기: 줄임표 뒤 공백 없음, 앞 괄호 빠짐, 가운데를 줄인 이름, 한 인용에 범위 여러 개."""
+    from rdagents.dataflows.output_validation import build_validation_report, resolve_source
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "(NDMI-기본-2025-20)+재난+피해+연쇄적+영향평가.md"
+    report.write_text("풍수해를 대상으로 한다.\n중복 기사를 제외하였다.\n복구비가 증가하였다.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="variants2")
+    name = report.name
+    known = {name: 3}
+    assert resolve_source("NDMI‑기본‑2025‑20…", known) == (name, True)        # 앞 괄호 빠짐
+    assert resolve_source("(NDMI‑기본‑2025‑20)…md", known) == (name, True)     # 가운데를 줄임
+    assert resolve_source("(NDMI‑기본‑2025‑20)…txt", known) == (None, False)   # 끝부분이 다르면 해석하지 않음
+
+    text = build_validation_report({
+        "01a.md": "풍수해 대상 [출처: (NDMI‑기본‑2025‑20)…L1‑L1]\n"
+                  "중복 기사 제외 [출처: NDMI‑기본‑2025‑20… L2‑L2]\n"
+                  "풍수해 대상 [출처: (NDMI‑기본‑2025‑20)…md L1‑L1]\n",
+        "02.md": f"풍수해 복구비 증가 [출처: {name} L1-L1, L3-L3, L9-L9]\n",       # L9는 범위 밖
+    })
+    assert "**형식·범위가 유효한 출처 인용 수**: 5" in text
+    assert "**출처 검증 이슈 수**: 1" in text and "L9-L9가" in text
+    assert "줄번호가 생략" not in text and "인용 원문을 찾을 수 없음" not in text
 
 def test_rerender_and_compare_runs(tmp_path):
     """저장된 결과를 LLM 없이 다시 렌더링하고(이전 검증보고서는 검사 대상에서 제외), 두 실행을 같은 지표로 비교한다."""
@@ -231,6 +260,12 @@ def test_rerender_and_compare_runs(tmp_path):
     table = render(str(run), str(run))
     n = after["원문에 없는 수치 표시 줄"]
     assert f"| 원문에 없는 수치 표시 줄 | {n} | {n} | 같음 |" in table
+
+    # 숫자 검산 표 번호가 공방·권고에 언급됐는지: 좁은 공백(U+202F)으로 쓴 '표 1.1'도 센다
+    (run / "00b_사전점검.md").write_text("## 숫자 검산\n\n불일치 1건\n\n| 비율 | 표 1.1 · 기타 |\n", encoding="utf-8")
+    (run / "02_심사공방_전문.md").write_text("표 1.1 값이 맞지 않습니다\n", encoding="utf-8")
+    (run / "08_보완권고.md").write_text("표 1.1을 원문과 대조하세요\n", encoding="utf-8")
+    assert collect(str(run))["숫자 검산 표가 공방·질의에 언급된 줄"] == 2
 
 def test_preparation_report_requires_budget_question():
     """예상 질의에 예산 타당성 질의가 없으면 3대 기준과 똑같이 검증 오류(-> 구조화 재시도)."""

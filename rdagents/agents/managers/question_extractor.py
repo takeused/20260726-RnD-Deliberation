@@ -34,6 +34,14 @@ _SHORT_OUTPUT_NOTE = (
     "권장 답변 초안과 출제 근거는 각각 2문장 이내로 쓰세요."
 )
 
+# 사전 점검의 숫자 검산이 불일치를 찾으면 질의·권고에 반드시 넣게 한다. groq4 실행에서 패널은 표 1.1 불일치를
+# 공방에서 따졌는데, 질의 개수를 줄이자 예상 질의·보완 권고에서는 빠졌다 (보고서의 가장 확실한 약점인데도)
+_NUMBER_CHECK_NOTE = (
+    "\n\n**숫자 검산 불일치 반영 (필수)**: 사전 점검의 '[숫자 검산]' 항목은 코드로 계산한 확정 오류 후보입니다. "
+    "이를 다루는 예상 질의 1건 이상(심의기준: 예산 타당성 또는 해당 기준)과, 해당 표·수치를 원문과 대조해 "
+    "바로잡으라는 보완 권고 1건 이상을 반드시 포함하고, 표 번호·적힌 값·계산 값을 그대로 적으세요."
+)
+
 
 def create_question_extractor(llm):
     def question_extractor_node(state):
@@ -55,6 +63,7 @@ def create_question_extractor(llm):
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
             + _SHORT_OUTPUT_NOTE * bool(_setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET"))
+            + _NUMBER_CHECK_NOTE * ("[숫자 검산]" in (state.get("precheck_brief") or ""))
         )
 
         prompt = ChatPromptTemplate.from_messages([

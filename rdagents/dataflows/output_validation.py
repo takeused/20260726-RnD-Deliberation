@@ -8,9 +8,12 @@ from collections.abc import Mapping
 from rdagents.dataflows.project_loader import get_source_line_counts, get_source_lines
 
 
+# 범위는 여러 개일 수 있고("… L319-L319, L314-L314"), 줄인 파일명 뒤에 공백 없이 붙기도 한다("…L3-L7")
 _CITATION_RE = re.compile(
-    r"[\[【]출처:\s*(?P<source>.+?)\s+L(?P<start>\d+)\s*[-–—]\s*L?(?P<end>\d+)[\]】]"
+    r"[\[【]출처:\s*(?P<source>.+?)\s*"
+    r"(?P<ranges>L\d+\s*[-–—]\s*L?\d+(?:\s*,\s*L\d+\s*[-–—]\s*L?\d+)*)\s*,?\s*[\]】]"
 )
+_RANGE_RE = re.compile(r"L(\d+)\s*[-–—]\s*L?(\d+)")
 _BROKEN_CITATION_RE = re.compile(r"[\[【]출처:[^\]】\n]*(?:L\s*[-…]|…)[^\]】]*[\]】]")
 _RISKY_UNVERIFIED_RE = re.compile(
     r"(?:\d[\d,.]*\s*(?:억원|억\s*원|%|명|개|USD|M)|MOU|FEMA|KOTRA|ISO[- ]?\d+)", re.I,
@@ -61,11 +64,16 @@ def resolve_source(source: str, known: Mapping[str, int]) -> tuple[str | None, b
     by_norm = {normalize_citation_text(name): name for name in known}
     if target in by_norm:
         return by_norm[target], False
-    prefix = _ELLIPSIS_RE.sub("", target)
+    target = target.replace("...", "…")
+    # 가운데를 줄인 이름("(NDMI-기본-2025-20)…md")은 앞부분과 끝부분을 따로 맞춘다
+    head, _, tail = _ELLIPSIS_RE.sub("", target).partition("…")
+    # 앞 괄호를 빼먹기도 한다("NDMI-기본-2025-20… L5-L8")
+    head = head.lstrip("(")
     # '…' 없이 앞부분만 쓴 경우("(NDMI-기본-2025-20) L1-L46")도 있다. 너무 짧은 앞부분은 우연히 맞을 수 있어 8자 이상만
-    if len(prefix) < (4 if prefix != target else 8):
+    if len(head) < (4 if "…" in target else 8):
         return None, False
-    matches = [name for norm, name in by_norm.items() if norm.startswith(prefix)]
+    matches = [name for norm, name in by_norm.items()
+               if norm.lstrip("(").startswith(head) and norm.endswith(tail)]
     return (matches[0], True) if len(matches) == 1 else (None, False)
 
 
@@ -182,20 +190,21 @@ def build_validation_report(documents: Mapping[str, str],
             for match in _CITATION_RE.finditer(line):
                 written = match.group("source").strip()
                 source, short = resolve_source(written, source_lines)
-                start, end = int(match.group("start")), int(match.group("end"))
                 if source is None:
-                    if not _ELLIPSIS_RE.search(written):  # 줄인 이름은 아래 '잘린 출처'로 한 번만 보고
+                    if "…" not in written and "..." not in written:  # 줄인 이름은 아래 '잘린 출처'로 한 번만 보고
                         citation_issues.append(f"- `{filename}` L{line_no}: 인용 원문을 찾을 수 없음 — `{written}`")
                     continue
                 resolved_spans.append(match.span())
                 maximum = source_lines[source]
-                if start < 1 or end < start or end > maximum:
-                    citation_issues.append(f"- `{filename}` L{line_no}: L{start}-L{end}가 `{source}`(최대 L{maximum})를 벗어남")
-                    continue
-                valid += 1
-                abbreviated += short
-                if source in source_texts:
-                    cited_parts.append((source, start, end, "\n".join(source_texts[source][start - 1:end])))
+                for start_text, end_text in _RANGE_RE.findall(match.group("ranges")):
+                    start, end = int(start_text), int(end_text)
+                    if start < 1 or end < start or end > maximum:
+                        citation_issues.append(f"- `{filename}` L{line_no}: L{start}-L{end}가 `{source}`(최대 L{maximum})를 벗어남")
+                        continue
+                    valid += 1
+                    abbreviated += short
+                    if source in source_texts:
+                        cited_parts.append((source, start, end, "\n".join(source_texts[source][start - 1:end])))
             # 한 줄에 출처가 여럿이면(표의 근거 칸 등) 문장의 수치가 어느 줄에 있는지 알 수 없으므로 모두 합쳐 대조
             if cited_parts and filename not in _CODE_GENERATED:
                 cited = "\n".join(text for *_, text in cited_parts)
