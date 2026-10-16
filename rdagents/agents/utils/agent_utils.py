@@ -36,6 +36,18 @@ TOOL_LIMIT_NOTE = (
 )
 
 
+# 짧은 문맥 모드에서 분석가 보고서 길이를 줄인다. Groq NDMI groq4 실행에서 분석가 보고서 4건이 출력 상한(3,072토큰,
+# 추론 토큰 포함)에서 잘려 끝의 요약 표가 빠졌다. 상한을 올리면 입력과 합쳐 분당 한도에 걸리므로(413) 출력을 줄인다
+ANALYST_SHORT_OUTPUT_NOTE = (
+    "\n\n**출력 길이 제한 (짧은 문맥 모드)**: 보고서는 전체 2,500자 이내로 쓰세요. 핵심 지적 5개 이내, 항목당 2~3문장, "
+    "말미 요약 표는 5행 이내로 하고, 같은 내용을 반복하지 마세요 (길면 출력 상한에서 잘려 요약 표가 빠집니다)."
+)
+
+
+def analyst_length_note(state: dict) -> str:
+    return ANALYST_SHORT_OUTPUT_NOTE if _setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET") else ""
+
+
 def bind_analyst_tools(llm, tools: list, state: dict):
     """(바인딩된 모델, 보낼 메시지). 도구 호출이 상한에 이르면 도구 없이 보고서 작성을 지시한다.
 

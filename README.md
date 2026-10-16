@@ -38,6 +38,8 @@ python main.py --project quantum_computing
 # Groq gpt-oss는 구조화 출력을 json_schema 방식으로 요청합니다 (도구 호출 방식은 tool_use_failed가 잦음)
 # 분당 8,000토큰에 맞춰 분석가가 보내는 도구 결과를 3,500자로 줄이고(RDAGENTS_TOOL_RESULT_CHAR_BUDGET),
 # 분석가 1명의 도구 호출을 3번으로 제한합니다(RDAGENTS_MAX_ANALYST_TOOL_CALLS). 환경변수가 프로필보다 우선합니다.
+# 출력 상한(3,072토큰, 추론 포함)에서 잘리지 않게 짧은 문맥 모드에서는 분석가 보고서(2,500자 이내)와
+# 예상 질의(5~7개)를 짧게 쓰도록 지시합니다. 상한을 올리면 입력과 합쳐 분당 한도에 걸려 413이 납니다.
 python main.py --project quantum_computing --profile test-groq
 
 # 실행 전 토큰 추정 (API 호출 없음): 가짜 LLM으로 그래프를 한 번 돌려 노드별 요청 크기와 총 토큰을 셈

@@ -205,6 +205,30 @@ def test_question_extractor_short_output_note(monkeypatch):
     assert "숫자 검산 불일치 반영" in captured["system"]
 
 
+def test_analysts_get_short_output_note(monkeypatch):
+    """짧은 문맥 모드면 분석가 6명 모두 보고서 길이 제한 지시를 받는다 (출력 상한에서 요약 표가 잘리지 않게)."""
+    from rdagents.agents import analysts
+
+    monkeypatch.delenv("RDAGENTS_PROMPT_CHAR_BUDGET", raising=False)
+    factories = [getattr(getattr(analysts, m), f) for m in ("economic", "feasibility", "policy", "regulatory",
+                                                             "tech_trend", "tech_value")
+                 for f in dir(getattr(analysts, m)) if f.startswith("create_")]
+    assert len(factories) == 6
+    for budget, expected in ((900, True), (0, False)):
+        for factory in factories:
+            captured = {}
+
+            class CaptureLLM:
+                def bind_tools(self, _tools, **_kw):
+                    def _run(prompt_val):
+                        captured["system"] = prompt_val.to_messages()[0].content
+                        return AIMessage(content="보고서")
+                    return _run
+
+            factory(CaptureLLM())({"messages": [], "review_year": "2026", "prompt_char_budget": budget})
+            assert ("출력 길이 제한" in captured["system"]) is expected, factory.__name__
+
+
 def test_more_citation_variants_from_gpt_oss(tmp_path):
     """groq4 실행에서 나온 표기: 줄임표 뒤 공백 없음, 앞 괄호 빠짐, 가운데를 줄인 이름, 한 인용에 범위 여러 개."""
     from rdagents.dataflows.output_validation import build_validation_report, resolve_source

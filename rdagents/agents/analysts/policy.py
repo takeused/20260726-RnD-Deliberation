@@ -2,7 +2,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from rdagents.agents.utils.agent_utils import bind_analyst_tools, get_language_instruction, get_project_context_from_state
+from rdagents.agents.utils.agent_utils import analyst_length_note, bind_analyst_tools, get_language_instruction, get_project_context_from_state
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.dataflows.project_loader import get_policy_alignment, get_project_overview, search_report
 
@@ -24,6 +24,7 @@ def create_policy_analyst(llm):
             "반드시 구체적인 정책 문서를 인용하여 분석하고, Markdown 표로 핵심 결과를 정리하세요."
             + get_review_criteria()
             + get_language_instruction()
+            + analyst_length_note(state)
         )
 
         prompt = ChatPromptTemplate.from_messages([
