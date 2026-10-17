@@ -117,13 +117,39 @@ def _split_number(token: str) -> tuple[float, int, str]:
     return float(digits), len(digits.split(".")[1]) if "." in digits else 0, m.group(2)
 
 
-def source_number_index(source_texts: Mapping[str, list[str]]) -> dict[str, list[float]]:
-    """입력 원문(사업보고서·외부근거)에 나오는 단위 붙은 수치를 단위별로 모은다."""
+def _table_numbers(lines: list[str]) -> set[str]:
+    """단위가 칸이 아니라 열 제목('피해액 비율', '금액(억 원)')이나 표 위 '(단위: 백만원, %)'에만 있는 표 숫자.
+
+    NDMI 표 1.1의 비율 칸은 '0.3'처럼 숫자만 있어, 예상 질의가 원문 값 '0.3%'를 그대로 옮겨도 원문에 없는 수치로 표시됐다.
+    """
+    from rdagents.dataflows import budget_check
+
+    out: set[str] = set()
+    for table in budget_check.find_tables(lines):
+        for c in range(1, len(table.header)):
+            unit = "%" if budget_check.RATIO_HEADER.search(table.header[c]) else (table.col_unit(c) or "")
+            if not unit:
+                continue
+            for _, cells in table.rows:
+                cell = re.sub(r"\*\*|<br>|%", "", cells[c]).strip()
+                if re.fullmatch(r"\d[\d,]*(?:\.\d+)?", cell):
+                    out |= _numbers(cell + unit)  # 알 수 없는 단위(백만원 등)는 _numbers가 걸러냄
+    return out
+
+
+def source_number_index(source_texts: Mapping[str, list[str]], extra_text: str = "") -> dict[str, list[float]]:
+    """입력 원문(사업보고서·외부근거)에 나오는 단위 붙은 수치를 단위별로 모은다.
+
+    extra_text: 코드가 원문에서 계산한 값(사전 점검의 숫자 검산 결과). 산출물이 '계산 값 3.2%'를 옮겨 적으면 원문엔
+    없지만 지어낸 수치도 아니다 (groq5 실행: 숫자 불일치 질의마다 표시가 붙었음).
+    """
     index: dict[str, list[float]] = {}
+    tokens = _numbers(extra_text)
     for lines in source_texts.values():
-        for token in _numbers("\n".join(lines)):
-            value, _, unit = _split_number(token)
-            index.setdefault(unit, []).append(value)
+        tokens |= _numbers("\n".join(lines)) | _table_numbers(lines)
+    for token in tokens:
+        value, _, unit = _split_number(token)
+        index.setdefault(unit, []).append(value)
     return index
 
 
@@ -149,14 +175,17 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     NDMI 실행에서 "대응시간 30% 감소", "추가 재산 피해 1,200억 원" 같은 원문에 없는 수치가 출처까지 달린 채
     분석 보고서와 공방에 들어갔다. 검증보고서에만 나열하면 산출물을 읽는 사람은 사실로 받아들이므로 본문에 표시한다.
     """
-    index = source_number_index(get_source_lines())
+    precheck = documents.get("00b_사전점검.md", "")
+    computed = precheck.split("## 숫자 검산", 1)[1] if "## 숫자 검산" in precheck else ""
+    index = source_number_index(get_source_lines(), computed)
     marked, found = dict(documents), []
     if not index:
         return marked, found  # 원문 모드가 아니면(샘플 JSON) 대조할 원문이 없음
     for filename, content in documents.items():
         if filename in _NOT_LLM_TEXT:
             continue
-        lines = content.splitlines()
+        # 지난 표시는 지우고 지금 규칙으로 다시 붙인다 (규칙을 고친 뒤 --rerender하면 오탐 표시가 사라지게)
+        lines = [_MARK_RE.sub("", line) for line in content.splitlines()]
         for i, line in enumerate(lines):
             missing = unsupported_numbers(line, index)
             if not missing:

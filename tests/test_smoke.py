@@ -158,9 +158,31 @@ def test_unsupported_numbers_are_marked_in_body(tmp_path):
     assert marked["01a.md"].splitlines()[1].endswith(UNSUPPORTED_NOTE.format("30%"))
     assert marked["02.md"] == "| 기대효과 | 인명 피해 15명 감소 " + UNSUPPORTED_NOTE.format("15명") + " |\n"
     assert marked["00b_사전점검.md"] == docs["00b_사전점검.md"]
-    assert mark_unsupported_numbers(marked)[1] == []                     # 이미 표시한 줄은 다시 안 붙임
+    assert mark_unsupported_numbers(marked) == (marked, found)            # 다시 돌려도 두 번 붙이지 않음
     text = build_validation_report(marked, found)
     assert "**원문에 없는 수치를 본문에 표시한 줄 수**: 2" in text and "`02.md` L1: 15명" in text
+
+
+def test_table_unit_and_computed_values_are_not_marked(tmp_path):
+    """단위가 열 제목·'(단위: …, %)'에만 있는 표 숫자와 사전 점검이 계산한 값은 원문 수치로 본다 (groq5 실행의 오탐).
+    규칙이 바뀌면 지난 표시는 지우고 다시 붙인다."""
+    from rdagents.dataflows.output_validation import UNSUPPORTED_NOTE, mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("###### 표 1.1 원인별 피해액\n\n(단위: 백만원, %)\n\n"
+                      "|구분|피해액 평균|피해액 비율|사업비(억원)|\n|---|---|---|---|\n"
+                      "|태풍·호우|642|0.3|12.5|\n|기타|18,511|2.8|7|\n", encoding="utf-8")
+    set_current_report(str(report), project_id="table-units")
+    precheck = "## 숫자 검산\n\n| 비율 | 표 1.1 · 태풍·호우 | 0.3% | 3.2% |\n"
+    old = "Q4. 비율 0.3%와 계산값 3.2% 중 어느 것이 정확합니까? " + UNSUPPORTED_NOTE.format("0.3%, 3.2%")
+    docs = {"00b_사전점검.md": precheck,
+            "07.md": old + "\n사업비 12.5억 원, 기타 2.8%, 신규 9.9%\n"}
+    marked, found = mark_unsupported_numbers(docs)
+    assert found == [("07.md", 2, ["9.9%"])]                            # 원문에 없는 값만 남음
+    assert marked["07.md"].splitlines()[0] == "Q4. 비율 0.3%와 계산값 3.2% 중 어느 것이 정확합니까?"
+    # 사전 점검 없이는 계산 값 3.2%는 원문에 없는 수치
+    assert mark_unsupported_numbers({"07.md": "계산값 3.2%"})[1] == [("07.md", 1, ["3.2%"])]
 
 def test_precheck_includes_number_crosscheck():
     """사전 점검에 숫자 검산(표 합계·비율·본문 합계)이 붙고, 불일치는 패널·질의 요약에 최대 3건 올라간다."""

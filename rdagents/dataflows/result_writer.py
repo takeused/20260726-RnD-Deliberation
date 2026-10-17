@@ -327,9 +327,12 @@ def _validate_and_render(out_dir: Path, project_id: str, metadata: dict) -> None
         if (out_dir / filename).exists() and filename != "14_검증보고서.md"
     }
     # 원문에 없는 수치는 산출물 본문에 바로 표시한다 (검증보고서와 HTML 리포트도 표시된 본문을 쓴다)
+    original = documents
     documents, number_marks = mark_unsupported_numbers(documents)
-    for filename in {f for f, _, _ in number_marks}:
-        (out_dir / filename).write_text(documents[filename], encoding="utf-8")
+    # 표시가 새로 붙은 파일뿐 아니라 지난 표시가 사라진 파일도 다시 쓴다 (규칙을 고친 뒤 --rerender)
+    for filename, content in documents.items():
+        if content != original[filename]:
+            (out_dir / filename).write_text(content, encoding="utf-8")
     (out_dir / "14_검증보고서.md").write_text(build_validation_report(documents, number_marks), encoding="utf-8")
     _write_html_report(out_dir, project_id, metadata)
 
