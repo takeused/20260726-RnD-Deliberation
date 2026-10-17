@@ -15,3 +15,9 @@ sample_data/(기획보고서)*
 sample_data/NTIS_유사사업.md
 sample_data/정책근거.md
 sample_data/시장조사.txt
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
