@@ -30,9 +30,9 @@ python -m pytest tests\test_smoke.py -q
 python -m compileall -q rdagents
 ```
 
-## 3. Cerebras API 설정
+## 3. Groq API 설정
 
-`.env.example`을 복사해 `.env`를 만들고 회사에서 발급한 Cerebras 키만 넣는다. 키는 채팅·문서·Git·결과물에 기록하지 않는다.
+`.env.example`을 복사해 `.env`를 만들고 Groq 키만 넣는다(Cerebras는 무료 정책 변경으로 사용하지 않는다). 키는 채팅·문서·Git·결과물에 기록하지 않는다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -41,15 +41,15 @@ Copy-Item .env.example .env
 필수 값:
 
 ```dotenv
-CEREBRAS_API_KEY=회사에서_발급한_키
+GROQ_API_KEY=발급받은_키
 ```
 
 권장 선택값:
 
 ```dotenv
-RDAGENTS_LLM_PROVIDER=cerebras
-RDAGENTS_DEEP_THINK_LLM=gpt-oss-120b
-RDAGENTS_QUICK_THINK_LLM=gpt-oss-120b
+RDAGENTS_LLM_PROVIDER=groq
+RDAGENTS_DEEP_THINK_LLM=openai/gpt-oss-120b
+RDAGENTS_QUICK_THINK_LLM=openai/gpt-oss-120b
 RDAGENTS_LLM_TIMEOUT=120
 ```
 
@@ -68,11 +68,11 @@ PDF가 원본인 경우 먼저 Markdown으로 변환하고, 페이지/줄 근거
 
 ## 5. 심의 실행
 
-아래 예시는 Cerebras와 문맥 예산이 적용된 실행이다. 파일명은 회사가 보유한 실제 입력 파일명에 맞춘다.
+아래 예시는 Groq 무료 등급과 문맥 예산이 적용된 실행이다. 심의 1회에 약 11만 토큰이 들어 하루 한도(20만 토큰)가 넉넉할 때 실행한다. 파일명은 회사가 보유한 실제 입력 파일명에 맞춘다.
 
 ```powershell
 python -u main.py `
-  --profile test-cerebras `
+  --profile test-groq `
   --report 'sample_data\(기획보고서).md' `
   --report-project-id institutional-outcomes-civil-convergence-2027 `
   --evidence 'sample_data\NTIS_유사사업.md' `

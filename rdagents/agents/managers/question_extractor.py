@@ -13,7 +13,7 @@ from rdagents.agents.schemas import (
     render_anticipated_questions,
     render_improvements,
 )
-from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import _setting, clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.agents.utils.structured import invoke_structured_model
 
@@ -25,6 +25,24 @@ _REPORT_SECTIONS = [
     ("feasibility_report", "수행체계 분석"),
     ("regulatory_report", "규제/윤리 검토"),
 ]
+
+
+# 짧은 문맥 모드(prompt_char_budget > 0)에서는 출력도 줄인다. Groq 무료 등급 NDMI 실행에서 이 노드 출력이
+# 2,988토큰으로 출력 상한(3,072)에 거의 닿았고, 앞선 시도에서는 JSON이 상한에서 잘려 실패했다.
+_SHORT_OUTPUT_NOTE = (
+    "\n\n**출력 길이 제한 (짧은 문맥 모드)**: 위의 개수 대신 예상 질의 5~7개, 보완 권고 3~5개만 작성하고, "
+    "권장 답변 초안과 출제 근거는 각각 2문장 이내로 쓰세요."
+)
+
+# 사전 점검의 숫자 검산이 불일치를 찾으면 질의·권고에 반드시 넣게 한다. groq4 실행에서 패널은 표 1.1 불일치를
+# 공방에서 따졌는데, 질의 개수를 줄이자 예상 질의·보완 권고에서는 빠졌다 (보고서의 가장 확실한 약점인데도)
+_NUMBER_CHECK_NOTE = (
+    "\n\n**숫자 검산 불일치 반영 (필수)**: 사전 점검의 '[숫자 검산]' 항목은 코드로 계산한 확정 오류 후보입니다. "
+    "이를 다루는 예상 질의 1건 이상(심의기준: 예산 타당성 또는 해당 기준)과, 해당 표·수치를 원문과 대조해 "
+    "바로잡으라는 보완 권고 1건 이상을 반드시 포함하고, 표 번호·적힌 값·계산 값을 그대로 적으세요. "
+    "어느 값이 맞는지는 원자료를 봐야 알 수 있으므로, 권장 답변에서 한쪽을 정답으로 단정하지 말고 "
+    "원자료 확인·정정 계획으로 답하세요."
+)
 
 
 def create_question_extractor(llm):
@@ -39,17 +57,21 @@ def create_question_extractor(llm):
             "2. **기획보고서 보완 권고 (5~10개)**: 심의 과정에서 드러난 보고서의 취약점과 "
             "구체적 수정·보강 방향.\n\n"
             "질의와 권고 모두 심각도 높은 순으로 정렬하고, 특히 최우선 심의기준 세 가지"
-            "(정부지원 필요성, 기술개발의 중요성, 시급성)를 겨냥한 항목을 반드시 포함하세요.\n"
+            "(정부지원 필요성, 기술개발의 중요성, 시급성)를 겨냥한 항목과, 예산 규모·비목 산출 근거를 묻는 "
+            "'예산 타당성' 질의를 반드시 1건 이상 포함하세요.\n"
             "권장 답변은 제출자료에서 확인한 사실만 단정하고, 확인하지 못한 항목은 가상의 기업·금액·MOU·해외사례를 만들지 말고 "
             "'제출자료로 확인하지 못했습니다. [확인 필요: 자료명]'로 답하세요.\n"
             + get_review_criteria()
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
+            + _SHORT_OUTPUT_NOTE * bool(_setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET"))
+            + _NUMBER_CHECK_NOTE * ("[숫자 검산]" in (state.get("precheck_brief") or ""))
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
             ("human", "## 기출·전형 질의 참고 (실제 심의 질의는 이런 패턴으로 나온다)\n\n{question_bank}\n\n"
+                      "## 기획보고서 사전 점검 (규칙 기반)\n\n{precheck}\n\n"
                       "## 전문가 분석 보고서\n\n{reports}\n\n"
                       "## 심사위원 패널-발표자 공방\n\n{debate_history}\n\n"
                       "## 전문위원회 위원장 의견\n\n{review_plan}\n\n"
@@ -68,11 +90,13 @@ def create_question_extractor(llm):
 
         prompt_val = prompt.invoke({
             "question_bank": clip_text(state.get("question_bank") or "", state, fraction=0.5) or "참고 자료 없음",
+            "precheck": state.get("precheck_brief")
+                or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
             "reports": _clip_half("\n\n".join(reports), state) or "분석 보고서 없음",
             "debate_history": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
-            "review_plan": state.get("review_plan", "의견 없음"),
+            "review_plan": clip_text(state.get("review_plan") or "", state, fraction=0.5) or "의견 없음",
             "audit_history": clip_text(state["audit_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
-            "final_decision": state.get("final_review_decision", "결정 없음"),
+            "final_decision": clip_text(state.get("final_review_decision") or "", state, fraction=0.5) or "결정 없음",
         })
 
         call = invoke_structured_model(

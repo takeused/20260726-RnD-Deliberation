@@ -26,6 +26,8 @@ from typing import Any, TypeVar
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from rdagents.llm_clients.quota import as_daily_quota, as_request_too_large
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -121,6 +123,11 @@ def invoke_structured_model(
         try:
             result = structured_llm.invoke(messages)
         except Exception as exc:
+            # 하루 사용량 한도는 재시도·자유 텍스트 폴백으로 해결되지 않으므로 즉시 위로 올린다
+            if daily := as_daily_quota(exc):
+                raise daily from exc
+            if too_large := as_request_too_large(exc):
+                raise too_large from exc  # 같은 크기로 재시도해도 같은 결과
             # include_raw=True는 파싱 오류를 dict로 돌려주므로 여기 오는 것은
             # 주로 전송/프로바이더 예외다. 검증 예외(non-raw 경로)도 포함.
             error_text = str(exc)
@@ -149,7 +156,9 @@ def invoke_structured_model(
                 HumanMessage(
                     content=(
                         "직전 출력이 스키마 검증에 실패했습니다. 오류:\n"
-                        f"{error_text}\n"
+                        # 공급자 오류에는 잘린 출력 원문(failed_generation)이 통째로 들어 있을 수 있다.
+                        # 그대로 붙이면 재시도 요청이 분당 한도를 넘는다 (NDMI 실행: 9,052토큰으로 413)
+                        f"{error_text[:500]}\n"
                         "위 오류를 해결하여 모든 필드 제약을 지킨 구조화 출력을 다시 생성하세요."
                     )
                 )

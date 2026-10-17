@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage
+import os
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 def make_ai_message(content: str, name: str, usage: dict | None = None) -> AIMessage:
@@ -16,14 +18,100 @@ def make_ai_message(content: str, name: str, usage: dict | None = None) -> AIMes
     return AIMessage(content=content, name=name)
 
 
+def _setting(state: dict, key: str, env_var: str) -> int:
+    """사용자가 준 환경변수, 없으면 상태 값.
+
+    환경변수를 먼저 보는 이유: 체크포인트로 이어서 실행할 때 상태에는 처음 실행한 설정이 남아 있다.
+    요청이 커서 멈춘 뒤 예산을 줄여 다시 실행하려면 새로 준 값이 이겨야 한다 (NDMI 실행, 예상 질의 단계 413).
+    """
+    value = os.environ.get(env_var)
+    if not value:
+        value = state.get(key)
+    return int(value or 0)
+
+
+TOOL_LIMIT_NOTE = (
+    "도구 호출 한도에 도달했습니다. 더 이상 도구를 부르지 말고, 지금까지 확보한 자료만으로 "
+    "분석 보고서를 완성하세요. 확인하지 못한 항목은 [확인 필요]로 표시하세요."
+)
+
+
+# 짧은 문맥 모드에서 분석가 보고서 길이를 줄인다. Groq NDMI groq4 실행에서 분석가 보고서 4건이 출력 상한(3,072토큰,
+# 추론 토큰 포함)에서 잘려 끝의 요약 표가 빠졌다. 상한을 올리면 입력과 합쳐 분당 한도에 걸리므로(413) 출력을 줄인다
+ANALYST_SHORT_OUTPUT_NOTE = (
+    "\n\n**출력 길이 제한 (짧은 문맥 모드)**: 보고서는 전체 2,500자 이내로 쓰세요. 핵심 지적 5개 이내, 항목당 2~3문장, "
+    "말미 요약 표는 5행 이내로 하고, 같은 내용을 반복하지 마세요 (길면 출력 상한에서 잘려 요약 표가 빠집니다)."
+)
+
+
+def analyst_length_note(state: dict) -> str:
+    return ANALYST_SHORT_OUTPUT_NOTE if _setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET") else ""
+
+
+def bind_analyst_tools(llm, tools: list, state: dict):
+    """(바인딩된 모델, 보낼 메시지). 도구 호출이 상한에 이르면 도구 없이 보고서 작성을 지시한다.
+
+    상한 뒤에는 tool_choice="none" 대신 도구를 아예 빼고, 도구 호출·결과를 글로 펼쳐 넘긴다.
+    Groq gpt-oss는 tool_choice="none"이어도 도구를 부르려다 400(tool_use_failed)을 낼 수 있고,
+    그러면 같은 체크포인트로 다시 실행해도 같은 자리에서 멈춘다.
+    """
+    messages = fit_tool_messages(state["messages"], state)
+    cap = _setting(state, "max_analyst_tool_calls", "RDAGENTS_MAX_ANALYST_TOOL_CALLS")
+    used = sum(isinstance(m, ToolMessage) for m in state["messages"])
+    if cap and used >= cap:
+        return llm, [*_tool_exchange_as_text(messages), HumanMessage(content=TOOL_LIMIT_NOTE)]
+    return llm.bind_tools(tools), messages
+
+
+def _tool_exchange_as_text(messages: list) -> list:
+    """도구 호출(AIMessage.tool_calls)과 결과(ToolMessage)를 일반 대화 메시지로 바꾼다 (도구 정의 없이 보내기 위해)."""
+    out = []
+    for m in messages:
+        if isinstance(m, ToolMessage):
+            text = m.content if isinstance(m.content, str) else str(m.content)
+            out.append(HumanMessage(content=f"[도구 결과: {m.name or '도구'}]\n{text}"))
+        elif isinstance(m, AIMessage) and m.tool_calls:
+            calls = ", ".join(f"{c['name']}({c.get('args', {})})" for c in m.tool_calls)
+            out.append(AIMessage(content=f"{m.content or ''}\n[도구 호출: {calls}]".strip()))
+        else:
+            out.append(m)
+    return out
+
+
+def fit_tool_messages(messages: list, state: dict, min_keep: int = 300) -> list:
+    """LLM에 보낼 메시지의 도구 결과 총량을 tool_result_char_budget(0=무제한) 안으로 줄인다.
+
+    최근 도구 결과부터 예산을 배정하고, 예산을 넘는 오래된 결과는 앞부분 min_keep자만 남긴다.
+    상태(체크포인트)에 저장된 원본은 바꾸지 않고, 이번 호출에 보내는 사본만 줄인다.
+    NDMI 보고서 실행에서 분석가가 도구를 4번 부르자 요청이 Groq 분당 한도(8,000토큰)를 넘었다(413).
+    """
+    budget = _setting(state, "tool_result_char_budget", "RDAGENTS_TOOL_RESULT_CHAR_BUDGET")
+    if budget <= 0:
+        return messages
+    out, used = list(messages), 0
+    for i in range(len(out) - 1, -1, -1):
+        m = out[i]
+        if not isinstance(m, ToolMessage):
+            continue
+        text = m.content if isinstance(m.content, str) else str(m.content)
+        if used + len(text) <= budget:
+            used += len(text)
+            continue
+        keep = max(budget - used, min_keep)
+        clipped = text[:keep] + f"\n…(앞선 도구 결과 {len(text) - keep:,}자 생략: 요청 크기 예산)"
+        out[i] = m.model_copy(update={"content": clipped})
+        used += len(clipped)
+    return out
+
+
 def clip_text(text: str, state: dict, fraction: float = 1.0) -> str:
     """상태의 prompt_char_budget(0=무제한)에 맞춰 긴 입력을 앞뒤 보존하며 중략.
 
-    Cerebras 무료 티어(8K 토큰)나 로컬 소형 모델처럼 컨텍스트가 작은 백엔드에서
+    Groq 무료 등급(분당 8,000토큰)이나 로컬 소형 모델처럼 컨텍스트가 작은 백엔드에서
     긴 심의 이력이 컨텍스트 초과로 실행을 중단시키는 것을 막는다.
     fraction: 입력 섹션이 많은 노드는 섹션당 예산을 줄이기 위해 1 미만을 지정.
     """
-    budget = int((state.get("prompt_char_budget") or 0) * fraction)
+    budget = int(_setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET") * fraction)
     if budget <= 0 or len(text) <= budget:
         return text
     head = int(budget * 0.6)

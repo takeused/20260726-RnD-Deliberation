@@ -18,7 +18,11 @@ from rdagents.agents.schemas import (
     render_final_decision,
     render_review_plan,
 )
-from rdagents.dataflows.output_validation import build_validation_report
+from rdagents.dataflows.output_validation import (
+    UNSUPPORTED_SUMMARY_TITLE,
+    build_validation_report,
+    mark_unsupported_numbers,
+)
 
 _ANALYST_FILES = [
     ("tech_value_report", "01a_분석_기술가치.md"),
@@ -31,6 +35,7 @@ _ANALYST_FILES = [
 
 _REPORT_FILES = [
     ("00_입력문서_출처.md", "입력 문서·출처"),
+    ("00b_사전점검.md", "기획보고서 사전 점검"),
     ("01a_분석_기술가치.md", "기술 가치 분석"),
     ("01b_분석_기술트렌드중복성.md", "기술 트렌드·중복성 분석"),
     ("01c_분석_경제재무.md", "경제·재무 분석"),
@@ -163,7 +168,15 @@ def _write_html_report(out_dir: Path, project_id: str, metadata: dict) -> Path:
     if project_name == "확인 필요":
         project_name = project_id
     source_manifest = documents.get("00_입력문서_출처.md", "")
-    validation_status = _find_label(documents.get("14_검증보고서.md", ""), "검증 상태")
+    validation = documents.get("14_검증보고서.md", "")
+    validation_status = _find_label(validation, "검증 상태")
+    # 원문에 없는 수치는 부록 속 검증보고서에 묻히지 않게 의결 바로 아래에 수치별 표로 싣는다
+    unsupported = ""
+    if UNSUPPORTED_SUMMARY_TITLE in validation:
+        body = validation.split(UNSUPPORTED_SUMMARY_TITLE, 1)[1].split("\n## ", 1)[0].strip()
+        if body != "- 없음":
+            unsupported = f'<h3 id="unsupported">검증 안 된 수치</h3>{_markdown_to_html(body)}'
+    toc_unsupported = '<a href="#unsupported">검증 안 된 수치</a>' if unsupported else ""
     execution_id = escape(str(metadata.get("execution_id", "알 수 없음")))
     provider = escape(str(metadata.get("provider", "알 수 없음")))
     deep_model = escape(str(metadata.get("deep_model", "알 수 없음")))
@@ -214,8 +227,8 @@ details {{ border:1px solid var(--line); margin:10px 0; background:#fcfdfd; }} s
 @media print {{ body {{ background:#fff; font-size:11pt; }} .page {{ max-width:none; padding:0; }} .toc,.skip-link {{ display:none; }} .masthead,section {{ box-shadow:none; break-inside:avoid; }} details {{ border:0; }} details[open] summary {{ display:none; }} .detail-body {{ display:none; }} }}
 </style></head><body><a class="skip-link" href="#report-main">본문으로 건너뛰기</a><div class="page">
 <header class="masthead"><p class="kicker">국가연구개발사업 심의결과 보고서</p><h1>{escape(project_name)}</h1><p class="subtitle">신규사업 심의 시뮬레이션 결과 · 의사결정용 요약본</p><div class="meta"><span><strong>심의 기준연도</strong> {review_year}</span><span><strong>수행 모델</strong> {provider} / {deep_model}</span><span><strong>실행 ID</strong> {execution_id}</span></div></header>
-<div class="layout"><nav class="toc" aria-label="보고서 목차"><p>목차</p><a href="#decision">심의 의결</a><a href="#overview">사업 개요</a><a href="#issues">핵심 쟁점</a><a href="#conditions">이행 조건</a><a href="#questions">질의 대비</a><a href="#appendix">상세 검토자료</a></nav><main class="content" id="report-main">
-<section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div><div class="notice"><strong>생성물 근거 검증</strong><br>{_inline_html(validation_status)} · 상세 내용은 부록의 생성물 근거 검증을 확인하세요.</div></div></div></section>
+<div class="layout"><nav class="toc" aria-label="보고서 목차"><p>목차</p><a href="#decision">심의 의결</a>{toc_unsupported}<a href="#overview">사업 개요</a><a href="#issues">핵심 쟁점</a><a href="#conditions">이행 조건</a><a href="#questions">질의 대비</a><a href="#appendix">상세 검토자료</a></nav><main class="content" id="report-main">
+<section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div><div class="notice"><strong>생성물 근거 검증</strong><br>{_inline_html(validation_status)} · 상세 내용은 부록의 생성물 근거 검증을 확인하세요.</div></div></div>{unsupported}</section>
 <section id="overview"><h2>2. 사업 개요</h2><dl class="facts"><div class="fact"><dt>사업명</dt><dd>{_inline_html(project_name)}</dd></div><div class="fact"><dt>심의 기준연도</dt><dd>{review_year}년</dd></div><div class="fact"><dt>예산 판단</dt><dd>{_inline_html(approved_budget)}</dd></div></dl><h3>입력 자료</h3><div class="source">{_markdown_to_html(source_manifest)}</div></section>
 <section id="issues"><h2>3. 핵심 심의 쟁점 및 보완 요구</h2>{_markdown_to_html(documents.get("08_보완권고.md", "내용이 없습니다."))}</section>
 <section id="conditions"><h2>4. 조건부 승인 이행 조건</h2>{_markdown_to_html(final.split("**이행 조건**:", 1)[1].strip() if "**이행 조건**:" in final else final)}</section>
@@ -237,6 +250,8 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         (out_dir / filename).write_text(content or "(내용 없음)", encoding="utf-8")
 
     write("00_입력문서_출처.md", final_state.get("source_manifest", ""))
+    if final_state.get("precheck_md"):
+        write("00b_사전점검.md", final_state["precheck_md"])
 
     for key, filename in _ANALYST_FILES:
         write(filename, final_state.get(key, ""))
@@ -310,12 +325,44 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         for item in bottlenecks
     )
     write("12_실행관측성.md", "\n".join(observation))
-    documents_for_validation = {
+    _validate_and_render(out_dir, project_id, metadata)
+
+    return out_dir
+
+
+def _validate_and_render(out_dir: Path, project_id: str, metadata: dict) -> None:
+    """저장된 산출물로 원문에 없는 수치 표시, 검증보고서(14), HTML 리포트를 만든다 (LLM 호출 없음)."""
+    documents = {
         filename: (out_dir / filename).read_text(encoding="utf-8")
         for filename, _ in _REPORT_FILES
-        if (out_dir / filename).exists()
+        # 다시 만들 때 이전 검증보고서가 자기 자신을 검사하지 않게 (미확인 문장 수가 8 -> 18로 부풀었음)
+        if (out_dir / filename).exists() and filename != "14_검증보고서.md"
     }
-    write("14_검증보고서.md", build_validation_report(documents_for_validation))
+    # 원문에 없는 수치는 산출물 본문에 바로 표시한다 (검증보고서와 HTML 리포트도 표시된 본문을 쓴다)
+    original = documents
+    documents, number_marks = mark_unsupported_numbers(documents)
+    # 표시가 새로 붙은 파일뿐 아니라 지난 표시가 사라진 파일도 다시 쓴다 (규칙을 고친 뒤 --rerender)
+    for filename, content in documents.items():
+        if content != original[filename]:
+            (out_dir / filename).write_text(content, encoding="utf-8")
+    (out_dir / "14_검증보고서.md").write_text(build_validation_report(documents, number_marks), encoding="utf-8")
     _write_html_report(out_dir, project_id, metadata)
 
+
+def rerender_results(run_dir: str, review_year: str = "") -> Path:
+    """이미 저장된 실행 결과의 검증보고서·HTML 리포트를 지금 코드로 다시 만든다 (LLM 호출 없음).
+
+    검증 규칙을 고친 뒤 지난 실행 결과에 다시 적용하거나 두 실행을 같은 기준으로 비교할 때 쓴다.
+    입력 원문은 호출 전에 set_current_report로 지정해 두어야 한다 (출처 줄 범위·원문 수치 대조에 필요).
+    """
+    out_dir = Path(run_dir)
+    observation = (out_dir / "12_실행관측성.md").read_text(encoding="utf-8") \
+        if (out_dir / "12_실행관측성.md").exists() else ""
+    metadata = {
+        "execution_id": _find_label(observation, "실행 ID"),
+        "provider": _find_label(observation, "프로바이더"),
+        "deep_model": _find_label(observation, "Deep 모델"),
+        "review_year": review_year or "알 수 없음",
+    }
+    _validate_and_render(out_dir, out_dir.parent.name, metadata)
     return out_dir

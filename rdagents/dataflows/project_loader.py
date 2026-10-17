@@ -26,6 +26,7 @@ class ProjectContext:
     retrieval_top_k: int = 4
     source_files: tuple[tuple[str, str, int], ...] = ()
     project_facts: dict[str, Any] = field(default_factory=dict)
+    source_texts: tuple[tuple[str, str], ...] = ()  # (파일명, 원문) — 출처 내용 대조용
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,7 @@ def set_current_report(
     project_id = validate_project_id(project_id)
     chunks = list(_build_chunks(report_text, chunk_chars, path.name, "사업보고서"))
     source_files: list[tuple[str, str, int]] = [(path.name, "사업보고서", len(report_text))]
+    source_texts: list[tuple[str, str]] = [(path.name, report_text)]
     for evidence_path in evidence_paths or []:
         evidence = Path(evidence_path).resolve()
         if not evidence.is_file():
@@ -214,10 +216,11 @@ def set_current_report(
         evidence_text = evidence.read_text(encoding="utf-8")
         chunks.extend(_build_chunks(evidence_text, chunk_chars, evidence.name, "외부근거"))
         source_files.append((evidence.name, "외부근거", len(evidence_text)))
+        source_texts.append((evidence.name, evidence_text))
     _current_context.set(
         ProjectContext(
             project_id, None, report_text, path.name, tuple(chunks), retrieval_top_k,
-            tuple(source_files), _extract_budget_facts(report_text, path.name),
+            tuple(source_files), _extract_budget_facts(report_text, path.name), tuple(source_texts),
         )
     )
     return project_id
@@ -304,6 +307,14 @@ def get_source_manifest() -> str:
     )
 
 
+def get_report_text_and_name() -> tuple[str | None, str | None]:
+    """원문 모드의 기획보고서 본문과 파일명 (샘플 JSON 모드면 (None, None)). 사전 점검 입력용."""
+    context = _current_context.get()
+    if context is None:
+        return None, None
+    return context.report_text, context.report_name
+
+
 def get_project_facts() -> dict[str, Any]:
     """현재 실행에 고정된 코드 검증 사업 사실을 반환한다."""
     context = _current_context.get()
@@ -321,6 +332,14 @@ def get_source_line_counts() -> dict[str, int]:
     for chunk in context.chunks:
         counts[chunk.source_name] = max(counts.get(chunk.source_name, 0), chunk.end_line)
     return counts
+
+
+def get_source_lines() -> dict[str, list[str]]:
+    """현재 실행에서 인용 가능한 입력 파일별 원문 줄 목록 (출처 내용 대조용)."""
+    context = _current_context.get()
+    if context is None:
+        return {}
+    return {name: text.splitlines() for name, text in context.source_texts}
 
 
 @tool
