@@ -23,7 +23,8 @@ _BUDGET_LABEL_RE = re.compile(
 )
 # 내용 대조용: 단위가 붙은 수치 (연도·번호처럼 단위 없는 숫자는 오탐이 많아 제외)
 # (?<![제\d,.]): 법조문 "제2조제3호"의 '2조'를 금액(조 원)으로 읽지 않게 (NDMI 실행에서 오탐)
-_UNIT_NUMBER_RE = re.compile(r"(?<![제\d,.])(\d[\d,]*(?:\.\d+)?)\s*(억\s*원|억|조|만\s*원|%|명|건|개)")
+# '2개월'은 개수가 아니라 기간이다 (groq5 실행에서 '최대 2개월', '3개월 차'가 원문에 없는 수치 '2개'로 표시됐음)
+_UNIT_NUMBER_RE = re.compile(r"(?<![제\d,.])(\d[\d,]*(?:\.\d+)?)\s*(억\s*원|억|조|만\s*원|%|명|건|개(?!월))")
 _WORD_RE = re.compile(r"[가-힣A-Za-z0-9]{2,}")
 # 산출물 문장마다 나오는 말은 겹침 판단에서 뺀다 (안 빼면 거의 모든 문장이 '겹침 있음'이 됨)
 _COMMON_BIGRAMS = {"출처", "사업", "보고", "고서", "있다", "한다", "하여", "에서", "으로", "니다", "습니", "확인", "필요"}
@@ -199,6 +200,45 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     return marked, found
 
 
+UNSUPPORTED_SUMMARY_TITLE = "## 검증 안 된 수치 요약 (수치별)"
+
+
+def _excerpt(line: str, token: str, width: int = 70) -> str:
+    """수치가 나온 줄을 표 칸에 넣을 수 있게 다듬고 수치 주변만 잘라낸다."""
+    text = _CITATION_RE.sub("", normalize_citation_text(_MARK_RE.sub("", line)))
+    text = re.sub(r"\s+", " ", re.sub(r"[|*#>`]|<br>", " ", text)).strip()
+    start = next((m.start() for m in _UNIT_NUMBER_RE.finditer(text) if _numbers(m.group(0)) == {token}), 0)
+    left = max(0, min(start - width // 3, len(text) - width))
+    return ("…" if left else "") + text[left:left + width] + ("…" if left + width < len(text) else "")
+
+
+def unsupported_number_summary(documents: Mapping[str, str],
+                               number_marks: list[tuple[str, int, list[str]]]) -> list[str]:
+    """원문에 없는 수치를 수치별로 묶은 표. 같은 수치가 여러 문서에 퍼지므로 줄 목록보다 확인할 것이 적다.
+
+    groq5 실행에서 표시 26줄이 분석·공방·질의에 흩어져 있어, 심의자가 '1,200억 원'이 어디서 처음 나와
+    몇 군데로 번졌는지 알려면 문서를 다 열어야 했다.
+    """
+    groups: dict[str, list[tuple[str, int]]] = {}
+    for filename, line_no, numbers in number_marks:
+        for token in numbers:
+            groups.setdefault(token, []).append((filename, line_no))
+    if not groups:
+        return ["- 없음"]
+    rows = ["| 수치 | 나온 줄 수 | 문서 | 처음 나온 문장 |", "|---|---:|---|---|"]
+    order = sorted(groups, key=lambda t: -len(groups[t]))  # 많이 번진 수치부터 (같으면 처음 나온 순서)
+    for token in order:
+        places = groups[token]
+        filename, line_no = places[0]
+        lines = documents.get(filename, "").splitlines()
+        example = _excerpt(lines[line_no - 1], token) if line_no <= len(lines) else ""
+        files = ", ".join(dict.fromkeys(f"`{f}`" for f, _ in places))
+        value, decimals, unit = _split_number(token)
+        shown = f"{value:,.{decimals}f}{unit}"  # 비교용으로 뺀 쉼표를 되살린다 (1200억 -> 1,200억)
+        rows.append(f"| {shown} | {len(places)} | {files} | {example} (`{filename}` L{line_no}) |")
+    return rows
+
+
 def build_validation_report(documents: Mapping[str, str],
                             number_marks: list[tuple[str, int, list[str]]] | None = None) -> str:
     """출처 형식·줄 범위와 미확인 사실형 문장을 별도 감사 보고서로 만든다."""
@@ -266,7 +306,10 @@ def build_validation_report(documents: Mapping[str, str],
         f"- **출처 검증 이슈 수**: {len(citation_issues)}",
         f"- **미확인 사실형 문장 수**: {len(unverified)}",
         f"- **출처 내용 대조 확인 권고 수**: {len(content_flags)}",
-        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}", "", "## 출처 검증 이슈", "",
+        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}", "",
+        UNSUPPORTED_SUMMARY_TITLE, "",
+        "원문 어디에도 없는 단위 붙은 수치입니다. 지어낸 값일 수 있으니 심의 제출 전 근거를 찾거나 삭제하세요.", "",
+        *unsupported_number_summary(documents, number_marks or []), "", "## 출처 검증 이슈", "",
         *(citation_issues or ["- 없음"]), "", "## 미확인 사실형 문장 (심의 제출 전 삭제·근거 보강 필요)", "",
         *(unverified or ["- 없음"]), "",
         "## 출처 내용 대조 확인 권고 (범위는 맞지만 인용 줄과 내용이 다를 수 있음)", "",

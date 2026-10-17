@@ -139,7 +139,12 @@ def test_citation_variants_from_gpt_oss_are_resolved(tmp_path):
 def test_unsupported_numbers_are_marked_in_body(tmp_path):
     """LLM 산출물에서 입력 원문에 없는 수치가 든 줄 끝에 표시를 붙인다. 반올림 값·0·표 숫자 칸·코드가 만든 파일은 제외,
     표 줄은 마지막 칸 안에 넣고, 다시 돌려도 두 번 붙이지 않는다."""
-    from rdagents.dataflows.output_validation import UNSUPPORTED_NOTE, build_validation_report, mark_unsupported_numbers
+    from rdagents.dataflows.output_validation import (
+        UNSUPPORTED_NOTE,
+        build_validation_report,
+        mark_unsupported_numbers,
+        unsupported_number_summary,
+    )
     from rdagents.dataflows.project_loader import set_current_report
 
     report = tmp_path / "원문.md"
@@ -161,6 +166,17 @@ def test_unsupported_numbers_are_marked_in_body(tmp_path):
     assert mark_unsupported_numbers(marked) == (marked, found)            # 다시 돌려도 두 번 붙이지 않음
     text = build_validation_report(marked, found)
     assert "**원문에 없는 수치를 본문에 표시한 줄 수**: 2" in text and "`02.md` L1: 15명" in text
+    # 수치별 요약: 같은 수치가 여러 줄에 나오면 한 행으로 묶고, 표 칸이 깨지지 않게 '|'와 출처·표시를 뺀 문장을 싣는다
+    marked["03.md"] = "질의: 대응시간 30% 감소 근거는?\n"
+    found.append(("03.md", 1, ["30%"]))
+    summary = build_validation_report(marked, found).split("## 검증 안 된 수치 요약 (수치별)")[1].split("\n## ")[0]
+    assert "| 30% | 2 | `01a.md`, `03.md` | 대응시간 30% 감소 (`01a.md` L2) |" in summary
+    assert "| 15명 | 1 | `02.md` | 기대효과 인명 피해 15명 감소 (`02.md` L1) |" in summary
+    assert summary.index("| 30% |") < summary.index("| 15명 |")       # 많이 번진 수치부터
+    # 기간 '2개월'은 개수가 아니고, 요약 표의 수치는 쉼표를 되살려 보여준다
+    assert mark_unsupported_numbers({"05.md": "지연을 최대 2개월로 제한\n"})[1] == []
+    rows = unsupported_number_summary({"02.md": "재산 1,200억 원 손실\n"}, [("02.md", 1, ["1200억"])])
+    assert rows[2].startswith("| 1,200억 | 1 |")
 
 
 def test_table_unit_and_computed_values_are_not_marked(tmp_path):
@@ -301,7 +317,9 @@ def test_rerender_and_compare_runs(tmp_path):
     after = collect(str(run))
     assert after["원문에 없는 수치 표시 줄"] == before["원문에 없는 수치 표시 줄"] + 1
     assert after["미확인 사실형 문장"] == before["미확인 사실형 문장"] + 1
-    assert "⚠️[원문에 없는 수치: 30%]" in (run / "심의종합리포트.html").read_text(encoding="utf-8")
+    html = (run / "심의종합리포트.html").read_text(encoding="utf-8")
+    assert "⚠️[원문에 없는 수치: 30%]" in html
+    assert '<h3 id="unsupported">검증 안 된 수치</h3>' in html and 'href="#unsupported"' in html  # 의결 바로 아래
 
     table = render(str(run), str(run))
     n = after["원문에 없는 수치 표시 줄"]
