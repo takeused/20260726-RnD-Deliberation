@@ -1,5 +1,6 @@
 """LangGraph 노드 및 엣지 설정 (TradingAgents 패턴 기반)."""
 
+import json
 from time import perf_counter
 
 from langchain_core.messages import HumanMessage, RemoveMessage
@@ -26,6 +27,7 @@ from rdagents.agents import (
     create_tech_value_analyst,
 )
 from rdagents.agents.utils.agent_states import ReviewAgentState
+from rdagents.dataflows.output_validation import mark_texts
 from rdagents.dataflows.project_loader import (
     get_budget_details,
     get_institution_info,
@@ -55,12 +57,66 @@ def _clear_messages(state: ReviewAgentState):
     return {"messages": removals + [HumanMessage(content="계속 진행하세요.")]}
 
 
+_REPORT_KEYS = ("tech_value_report", "tech_trend_report", "economic_report",
+                "policy_report", "feasibility_report", "regulatory_report")
+# 구조화 출력 JSON: 문자열 값에만 표시를 붙인다 (예상 질의 추출기가 최종 결정 JSON을 그대로 읽음)
+_JSON_KEYS = ("review_plan", "budget_coordination_plan", "final_review_decision")
+# 토론 상태의 글 필드. current_response("Examiner")·latest_speaker는 흐름 제어 값이라 건드리지 않는다.
+_DEBATE_TEXT_KEYS = {
+    "review_debate_state": ("history", "examiner_history", "defender_history", "judge_decision"),
+    "audit_debate_state": ("history", "aggressive_history", "conservative_history", "neutral_history",
+                           "current_aggressive_response", "current_conservative_response",
+                           "current_neutral_response", "judge_decision"),
+}
+
+
+def _mark_json(raw: str, precheck_md: str) -> str:
+    """JSON 문자열의 글 값에 표시를 붙인다. JSON이 아니면 그대로."""
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw
+    if not isinstance(data, dict):
+        return raw
+    texts = {key: value for key, value in data.items() if isinstance(value, str) and value}
+    if not texts:
+        return raw
+    marked = mark_texts(texts, precheck_md)
+    if marked == texts:
+        return raw
+    return json.dumps({**data, **marked}, ensure_ascii=False)
+
+
+def _mark_numbers(result: dict, state) -> dict:
+    """노드가 쓴 글에 원문에 없는 수치 표시를 바로 붙인다 (뒤 노드가 지어낸 수치를 사실로 읽고 이어 쓰지 않게)."""
+    precheck_md = state.get("precheck_md", "")
+    result = {**result, **{key: _mark_json(result[key], precheck_md)
+                           for key in _JSON_KEYS if isinstance(result.get(key), str)}}
+    texts = {key: result[key] for key in _REPORT_KEYS if isinstance(result.get(key), str) and result[key]}
+    for state_key, fields in _DEBATE_TEXT_KEYS.items():
+        debate = result.get(state_key)
+        if isinstance(debate, dict):
+            texts |= {f"{state_key}.{f}": debate[f] for f in fields if isinstance(debate.get(f), str) and debate[f]}
+    if not texts:
+        return result
+    marked = mark_texts(texts, precheck_md)
+    out = {**result, **{key: marked[key] for key in _REPORT_KEYS if key in marked}}
+    for state_key in _DEBATE_TEXT_KEYS:
+        if isinstance(result.get(state_key), dict):
+            prefix = f"{state_key}."
+            out[state_key] = {**result[state_key],
+                              **{k[len(prefix):]: v for k, v in marked.items() if k.startswith(prefix)}}
+    return out
+
+
 def _timed_node(node_name: str, node, model_name: str = "도구/로직"):
     """노드 실행시간과 응답 토큰 메타데이터를 상태에 누적한다."""
     def wrapped(state):
         started = perf_counter()
         result = node.invoke(state) if hasattr(node, "invoke") else node(state)
         elapsed = perf_counter() - started
+        if isinstance(result, dict):
+            result = _mark_numbers(result, state)
         input_tokens = output_tokens = total_tokens = 0
         for message in result.get("messages", []):
             usage = getattr(message, "usage_metadata", None) or {}
