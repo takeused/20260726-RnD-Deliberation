@@ -5,22 +5,42 @@ import sys
 
 from dotenv import load_dotenv
 
+try:
+    # 회사 프록시처럼 TLS를 가로채는 환경에서는 Python 기본 인증서 묶음이 프록시 인증서를 몰라
+    # LLM API 호출이 "Connection error"로 실패한다. 운영체제 인증서 저장소를 쓰게 한다.
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:  # 선택 의존성: 없으면 기본 인증서 묶음 사용
+    pass
+
+from rdagents.default_config import _ENV_OVERRIDES
 from rdagents.graph.review_graph import RDReviewGraph
 from rdagents.llm_clients.api_key_env import get_api_key_env
+from rdagents.llm_clients.quota import DailyQuotaExceeded, RequestTooLarge
 
 
 _KEY_OPTIONAL_PROVIDERS = {"bedrock", "ollama", "openai_compatible"}
 
-# 실행 프로파일: 테스트는 저비용(Cerebras/로컬), 실전은 Gemini
+# 실행 프로파일: 테스트는 저비용(Groq/로컬), 실전은 Gemini
 PROFILES = {
-    "test-cerebras": {
-        "llm_provider": "cerebras",
-        "deep_think_llm": "gpt-oss-120b",
-        "quick_think_llm": "gpt-oss-120b",
-        # 무료 티어 컨텍스트 8K 토큰 제한 대응
-        "prompt_char_budget": 1200,
-        "report_chunk_chars": 1500,
+    # Groq 무료 등급은 분당 8,000토큰이라 요청 하나가 그보다 크면 거절된다 -> 짧은 문맥 예산
+    "test-groq": {
+        "llm_provider": "groq",
+        "deep_think_llm": "openai/gpt-oss-120b",
+        "quick_think_llm": "openai/gpt-oss-120b",
+        "prompt_char_budget": 900,  # 1200이면 예상 질의 단계 요청이 분당 한도에 닿음 (NDMI 실행, 413)
+        # 분석가가 도구 3개(개요·기술·검색)를 부르면 결과가 한 요청에 쌓인다. 1500자 조각이면 8,555토큰으로
+        # 분당 한도(8,000)를 넘었음(NDMI 실행, 413) -> 900자
+        "report_chunk_chars": 900,
         "report_retrieval_top_k": 2,
+        # 조각을 줄여도 도구를 4번 부르면 다시 넘었음 -> 도구 결과 총량에 예산 (약 2,500토큰)
+        "tool_result_char_budget": 3500,
+        # 분석가 3명에 약 9만 토큰이 들어 하루 한도(20만)로 심의를 끝낼 수 없었음 -> 도구 호출 3번까지
+        "max_analyst_tool_calls": 3,
+        # gpt-oss는 추론 토큰도 출력 상한(Groq 기본 3,072)을 쓴다. NDMI 실행에서 응답 5건이 상한에서 잘렸고
+        # 예상 질의 JSON이 완성되지 못했음 -> 추론을 줄여 본문에 출력을 남긴다
+        "openai_reasoning_effort": "low",
     },
     "test-local": {
         "llm_provider": "ollama",
@@ -84,7 +104,7 @@ def main():
         "--profile",
         choices=sorted(PROFILES),
         default=None,
-        help="실행 프로파일: test-cerebras(Cerebras API), test-local(Ollama gemma4:e4b), "
+        help="실행 프로파일: test-groq(Groq API), test-local(Ollama gemma4:e4b), "
              "prod(Gemini 3.1 Flash). 미지정 시 .env/기본 설정 사용.",
     )
     parser.add_argument(
@@ -118,6 +138,25 @@ def main():
         help="심의 대상 연도",
     )
     parser.add_argument(
+        "--rerender",
+        action="store_true",
+        help="LLM 없이 --run-dir의 저장된 산출물로 검증보고서(14)·원문에 없는 수치 표시·HTML 리포트를 지금 코드로 "
+             "다시 만듭니다. 입력 원문(--report, --evidence)이 필요합니다.",
+    )
+    parser.add_argument(
+        "--compare-runs",
+        nargs=2,
+        metavar=("RUN_DIR_A", "RUN_DIR_B"),
+        default=None,
+        help="두 실행 결과 폴더를 같은 지표(잘린 응답·인용·원문에 없는 수치·예상 질의·토큰)로 비교합니다.",
+    )
+    parser.add_argument(
+        "--estimate-tokens",
+        action="store_true",
+        help="LLM을 부르지 않고 노드별 요청 크기와 총 토큰을 추정합니다 (분당·하루 한도 확인). "
+             "--execution-id를 주면 체크포인트에서 이어서 실행할 남은 부분만 셉니다.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="디버그 출력 활성화",
@@ -129,14 +168,50 @@ def main():
 
     # 프로파일·관문 오버라이드 (모든 실행 모드에 공통 적용)
     overrides = dict(PROFILES[args.profile]) if args.profile else {}
+    # 사용자가 RDAGENTS_* 환경변수로 직접 준 값은 프로파일보다 우선 (예: 요청이 크면 조각 크기만 줄여 재실행)
+    for env_var, key in _ENV_OVERRIDES.items():
+        if os.environ.get(env_var):
+            overrides.pop(key, None)
     if args.gate:
         overrides["review_gate"] = args.gate
     overrides = overrides or None
 
     provider = (
         overrides["llm_provider"] if overrides and "llm_provider" in overrides
-        else os.getenv("RDAGENTS_LLM_PROVIDER", "cerebras")
+        else os.getenv("RDAGENTS_LLM_PROVIDER", "groq")
     )
+    # 결과 비교·다시 만들기 모드: LLM 호출 없음
+    if args.compare_runs:
+        from rdagents.dataflows.run_compare import render as render_comparison
+
+        print(render_comparison(*args.compare_runs))
+        return 0
+    if args.rerender:
+        if not args.run_dir or not args.report:
+            print("오류: --rerender에는 --run-dir과 --report(그 실행의 입력 원문)가 필요합니다.", file=sys.stderr)
+            return 2
+        from rdagents.dataflows.project_loader import set_current_report
+        from rdagents.dataflows.result_writer import rerender_results
+
+        set_current_report(args.report, args.report_project_id, evidence_paths=args.evidence)
+        out = rerender_results(args.run_dir, review_year=args.year)
+        print(f"다시 만듦: {out / '14_검증보고서.md'}, {out / '심의종합리포트.html'}")
+        return 0
+
+    # 토큰 추정 모드: API 키 없이 가짜 LLM으로 요청 크기만 센다
+    if args.estimate_tokens:
+        from rdagents.dataflows.token_estimate import estimate, render
+        from rdagents.default_config import DEFAULT_CONFIG
+
+        config = {**DEFAULT_CONFIG, **(overrides or {})}
+        est = estimate(config, dict(
+            project_id=args.project, review_year=args.year, report_path=args.report,
+            report_project_id=args.report_project_id, evidence_paths=args.evidence,
+        ), execution_id=args.execution_id)
+        print(render(est, tpm=int(os.getenv("RDAGENTS_TPM_LIMIT", "8000")),
+                     tpd=int(os.getenv("RDAGENTS_TPD_LIMIT", "200000"))))
+        return 0
+
     auth_error = _validate_provider_auth(provider)
     if auth_error:
         print(f"오류: {auth_error}", file=sys.stderr)
@@ -236,6 +311,29 @@ def main():
             print("- 12_실행관측성.md : 모델·노드 시간·토큰·비용 상태")
             print("- 심의종합리포트.html : 전체 결과 통합 열람용 리포트")
             
+    except DailyQuotaExceeded as e:
+        # 하루 한도는 재시도로 풀리지 않는다: 멈추고 이어서 실행하는 방법을 안내
+        wait = f"약 {e.retry_after} 뒤" if e.retry_after else "한도가 풀린 뒤"
+        print(f"\n[하루 사용량 한도 초과] {provider} 공급자의 하루 한도에 걸려 심의를 멈췄습니다.", file=sys.stderr)
+        if args.execution_id and graph.config.get("checkpoint_enabled"):
+            print(f"{wait} 같은 명령(--execution-id {args.execution_id})으로 다시 실행하면 "
+                  "끝난 단계는 건너뛰고 이어서 진행합니다.", file=sys.stderr)
+        else:
+            print(f"{wait} 다시 실행하세요. 이어서 실행하려면 RDAGENTS_CHECKPOINT_ENABLED=true와 "
+                  "--execution-id를 지정해야 합니다 (지금은 처음부터 다시 실행됨).", file=sys.stderr)
+        print("안내된 대기 시간은 '다음 요청 하나'가 들어갈 자리가 생기는 시간입니다. 남은 심의 전체가 끝나려면 "
+              "더 오래 기다려야 할 수 있습니다 (Groq 무료: 하루 20만 토큰, 심의 1회 약 11만 토큰).", file=sys.stderr)
+        print(f"공급자 메시지: {e}", file=sys.stderr)
+        return 3
+    except RequestTooLarge as e:
+        print(f"\n[요청 크기 초과] {provider} 공급자의 분당 토큰 한도보다 큰 요청이 만들어져 심의를 멈췄습니다.",
+              file=sys.stderr)
+        print("분석가 단계면 보고서 조각을 줄이세요. 예: RDAGENTS_REPORT_CHUNK_CHARS=600, RDAGENTS_REPORT_TOP_K=1. "
+              "공방 이후 단계면 문맥 예산을 줄이세요. 예: RDAGENTS_PROMPT_CHAR_BUDGET=900. "
+              "체크포인트를 켰다면 같은 --execution-id로 이어서 실행되고, 새로 준 환경변수가 적용됩니다. "
+              "얼마나 줄일지는 --estimate-tokens로 먼저 확인하세요.", file=sys.stderr)
+        print(f"공급자 메시지: {e}", file=sys.stderr)
+        return 4
     except Exception as e:
         print(f"\n[오류 발생]: {e}", file=sys.stderr)
         return 1

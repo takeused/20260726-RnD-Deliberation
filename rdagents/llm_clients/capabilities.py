@@ -90,8 +90,22 @@ _DEFAULT = ModelCapabilities(
 )
 
 
+# Groq-hosted gpt-oss: function-calling structured output often fails with
+# ``tool_use_failed`` (400) when the model answers in text instead of calling
+# the tool; ``json_schema`` (strict response_format) is reliable. Groq model IDs
+# carry the ``openai/`` prefix.
+_GROQ_GPT_OSS = ModelCapabilities(
+    supports_tool_choice=True,
+    supports_json_mode=True,
+    supports_json_schema=True,
+    preferred_structured_method="json_schema",
+)
+
+
 # Exact-ID matches take precedence over pattern matches.
 _BY_ID: dict[str, ModelCapabilities] = {
+    "openai/gpt-oss-120b": _GROQ_GPT_OSS,
+    "openai/gpt-oss-20b": _GROQ_GPT_OSS,
     "deepseek-chat": _DEEPSEEK_CHAT,
     "deepseek-reasoner": _DEEPSEEK_THINKING,
     "deepseek-v4-flash": _DEEPSEEK_THINKING,

@@ -2,7 +2,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from rdagents.agents.utils.agent_utils import get_language_instruction, get_project_context_from_state
+from rdagents.agents.utils.agent_utils import analyst_length_note, bind_analyst_tools, get_language_instruction, get_project_context_from_state
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.dataflows.project_loader import get_similar_projects, get_tech_details, search_report
 
@@ -25,6 +25,7 @@ def create_tech_trend_analyst(llm):
             "Markdown 표를 첨부하세요."
             + get_review_criteria()
             + get_language_instruction()
+            + analyst_length_note(state)
         )
 
         prompt = ChatPromptTemplate.from_messages([
@@ -44,8 +45,8 @@ def create_tech_trend_analyst(llm):
         prompt = prompt.partial(review_year=state["review_year"])
         prompt = prompt.partial(project_context=project_context)
 
-        chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        model, messages = bind_analyst_tools(llm, tools, state)
+        result = (prompt | model).invoke(messages)
 
         report = ""
         if len(result.tool_calls) == 0:

@@ -9,12 +9,14 @@ from uuid import uuid4
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from rdagents.dataflows.plan_precheck import run_precheck
 from rdagents.default_config import DEFAULT_CONFIG
 from rdagents.agents.utils.gate_profiles import get_gate_profile
 from rdagents.dataflows.memory_log import append_memory, load_past_context
 from rdagents.dataflows.question_bank import load_question_bank
 from rdagents.dataflows.project_loader import (
     get_project_facts,
+    get_report_text_and_name,
     get_source_manifest,
     set_current_project,
     set_current_report,
@@ -86,7 +88,7 @@ class RDReviewGraph:
             "openai": ("reasoning_effort", self.config["openai_reasoning_effort"]),
             "azure": ("reasoning_effort", self.config["openai_reasoning_effort"]),
             "anthropic": ("effort", self.config["anthropic_effort"]),
-            "cerebras": ("reasoning_effort", self.config["openai_reasoning_effort"]),
+            "groq": ("reasoning_effort", self.config["openai_reasoning_effort"]),
         }
         if provider in effort_map:
             key, value = effort_map[provider]
@@ -130,6 +132,9 @@ class RDReviewGraph:
             max_chars=self.config["max_memory_chars"],
         )
 
+        # 원문 모드면 심의 전에 규칙 기반 사전 점검 (LLM 호출 없음)
+        precheck_md, precheck_brief = run_precheck(*get_report_text_and_name())
+
         execution_id_provided = execution_id is not None
         execution_id = execution_id or uuid4().hex
         initial_state = self.propagator.create_initial_state(
@@ -143,7 +148,11 @@ class RDReviewGraph:
             question_bank=load_question_bank(
                 [self.config["question_bank_seed_dir"], self.config["question_bank_dir"]]
             ),
+            precheck_md=precheck_md,
+            precheck_brief=precheck_brief,
             prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
+            tool_result_char_budget=int(self.config.get("tool_result_char_budget") or 0),
+            max_analyst_tool_calls=int(self.config.get("max_analyst_tool_calls") or 0),
             execution_metadata={
                 "execution_id": execution_id,
                 "provider": self.config["llm_provider"],

@@ -24,8 +24,8 @@ def create_rereview_comparator(llm):
             ])
             prompt_val = prompt.invoke({
                 "past": clip_text(past, state),
-                "plan": state.get("review_plan") or "없음",
-                "decision": state.get("final_review_decision") or "없음",
+                "plan": clip_text(state.get("review_plan") or "", state, fraction=0.5) or "없음",
+                "decision": clip_text(state.get("final_review_decision") or "", state, fraction=0.5) or "없음",
                 "improvements": clip_text(state.get("improvement_recommendations_md") or "", state) or "없음",
             })
             call = invoke_structured_model(

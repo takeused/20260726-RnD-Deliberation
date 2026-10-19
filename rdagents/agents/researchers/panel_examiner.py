@@ -28,7 +28,9 @@ def create_panel_examiner(llm):
             "2. 최우선 심의기준(정부지원 필요성, 기술개발의 중요성, 시급성)을 겨냥한 공격을 "
             "반드시 포함하되, 이전 라운드에서 이미 던진 질의를 반복하지 마세요.\n"
             "3. 발표자의 이전 방어에 허점·회피·근거 부족이 있으면 그 지점을 재차 파고드세요.\n"
-            "4. 예의는 갖추되 봐주지 마세요. 국가 예산이 걸린 심의입니다.\n"
+            "4. 예산 규모와 비목·단가의 산출 근거를 묻는 질의를 공방 전체에서 최소 1회 포함하세요. "
+            "이전 라운드에서 이미 물었다면 반복하지 말고, 방어가 부실했던 경우에만 재차 파고드세요.\n"
+            "5. 예의는 갖추되 봐주지 마세요. 국가 예산이 걸린 심의입니다.\n"
             + get_review_criteria()
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
@@ -36,7 +38,8 @@ def create_panel_examiner(llm):
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
-            ("human", "다음은 전문가들의 사전 분석 보고서입니다:\n\n{reports}\n\n"
+            ("human", "## 기획보고서 사전 점검 (규칙 기반)\n{precheck}\n\n"
+                      "다음은 전문가들의 사전 분석 보고서입니다:\n\n{reports}\n\n"
                       "발표자(사업 담당자)의 이전 방어 발언:\n{defender_history}\n\n"
                       "패널이 이전에 던진 질의·지적:\n{examiner_history}\n\n"
                       "위 내용을 바탕으로 이번 라운드의 심사 질의·지적을 제시하세요."),
@@ -48,6 +51,9 @@ def create_panel_examiner(llm):
                 reports.append(f"--- {name} ---\n{state[key]}")
 
         prompt_val = prompt.invoke({
+            # 규칙 점검에서 누락·근거 약함으로 나온 항목 = 우선 공격 지점 (템플릿 변수로 넘겨 원문의 중괄호에 안전)
+            "precheck": state.get("precheck_brief")
+                or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
             "reports": clip_text("\n\n".join(reports), state) or "분석 보고서 없음",
             "defender_history": clip_text(state["review_debate_state"]["defender_history"], state)
                 or "아직 발표자 발언이 없습니다. 보고서 자체의 허점을 공격하세요.",
