@@ -10,7 +10,8 @@ from rdagents.dataflows.project_loader import get_source_line_counts, get_source
 
 # 범위는 여러 개일 수 있고("… L319-L319, L314-L314"), 줄인 파일명 뒤에 공백 없이 붙기도 한다("…L3-L7")
 _CITATION_RE = re.compile(
-    r"[\[【]출처:\s*(?P<source>.+?)\s*"
+    # 파일명에 닫는 괄호가 들어가지 않게: 줄번호 없는 '【출처: 전문위원회 의견】' 뒤의 다른 인용까지 삼켰음 (07b JSON)
+    r"[\[【]출처:\s*(?P<source>[^\]】]+?)\s*"
     r"(?P<ranges>L\d+\s*[-–—]\s*L?\d+(?:\s*,\s*L\d+\s*[-–—]\s*L?\d+)*)\s*,?\s*[\]】]"
 )
 _RANGE_RE = re.compile(r"L(\d+)\s*[-–—]\s*L?(\d+)")
@@ -118,6 +119,31 @@ def _split_number(token: str) -> tuple[float, int, str]:
     return float(digits), len(digits.split(".")[1]) if "." in digits else 0, m.group(2)
 
 
+# 원문은 '14,160백만원'인데 산출물은 '141.6억 원'으로 바꿔 쓴다 (기관고유·지역재난 보고서에서 검증 총사업비가 26·23줄 표시됐음)
+_SMALL_MONEY_RE = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(천\s*만\s*원|백\s*만\s*원|만\s*원|천\s*원)")
+
+
+def _money_tokens(won: float) -> set[str]:
+    """원 단위 금액을 산출물이 쓰는 억·조 단위 수치로. 1억 미만을 0.07억으로, 9,600억을 0.96조로 바꿔 두면
+    반올림 허용 범위 때문에 지어낸 '0.1억'·'1조'까지 통과하므로(NDMI groq5) 그 단위로 1 이상인 값만 만든다."""
+    return {f"{won / scale:.6f}".rstrip("0").rstrip(".") + unit
+            for scale, unit in ((1e8, "억"), (1e12, "조")) if won >= scale}
+
+
+def _converted_money(text: str) -> set[str]:
+    """본문의 천원·만원·백만원 금액과 억·조 금액을 서로 바꾼 값 (2.11조 <-> 21,100억)."""
+    from rdagents.dataflows.budget_check import UNIT_WON
+
+    out: set[str] = set()
+    for m in _SMALL_MONEY_RE.finditer(text):
+        out |= _money_tokens(float(m.group(1).replace(",", "")) * UNIT_WON[re.sub(r"\s", "", m.group(2))])
+    for token in _numbers(text):
+        value, _, unit = _split_number(token)
+        if unit in ("억", "조"):
+            out |= _money_tokens(value * UNIT_WON[unit])
+    return out
+
+
 def _table_numbers(lines: list[str]) -> set[str]:
     """단위가 칸이 아니라 열 제목('피해액 비율', '금액(억 원)')이나 표 위 '(단위: 백만원, %)'에만 있는 표 숫자.
 
@@ -133,8 +159,11 @@ def _table_numbers(lines: list[str]) -> set[str]:
                 continue
             for _, cells in table.rows:
                 cell = re.sub(r"\*\*|<br>|%", "", cells[c]).strip()
-                if re.fullmatch(r"\d[\d,]*(?:\.\d+)?", cell):
-                    out |= _numbers(cell + unit)  # 알 수 없는 단위(백만원 등)는 _numbers가 걸러냄
+                if not re.fullmatch(r"\d[\d,]*(?:\.\d+)?", cell):
+                    continue
+                if unit in budget_check.UNIT_WON:  # 금액 열은 억·조로 바꿔 둔다 ('총사업비(백만원)' 열의 4,500)
+                    out |= _money_tokens(float(cell.replace(",", "")) * budget_check.UNIT_WON[unit])
+                out |= _numbers(cell + unit)
     return out
 
 
@@ -145,9 +174,10 @@ def source_number_index(source_texts: Mapping[str, list[str]], extra_text: str =
     없지만 지어낸 수치도 아니다 (groq5 실행: 숫자 불일치 질의마다 표시가 붙었음).
     """
     index: dict[str, list[float]] = {}
-    tokens = _numbers(extra_text)
+    tokens = _numbers(extra_text) | _converted_money(extra_text)
     for lines in source_texts.values():
-        tokens |= _numbers("\n".join(lines)) | _table_numbers(lines)
+        text = "\n".join(lines)
+        tokens |= _numbers(text) | _converted_money(text) | _table_numbers(lines)
     for token in tokens:
         value, _, unit = _split_number(token)
         index.setdefault(unit, []).append(value)

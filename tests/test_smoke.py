@@ -200,6 +200,29 @@ def test_table_unit_and_computed_values_are_not_marked(tmp_path):
     # 사전 점검 없이는 계산 값 3.2%는 원문에 없는 수치
     assert mark_unsupported_numbers({"07.md": "계산값 3.2%"})[1] == [("07.md", 1, ["3.2%"])]
 
+
+def test_million_won_amounts_match_eok_in_outputs(tmp_path):
+    """원문의 백만원·천원 금액과 억·조 금액을 산출물이 다른 단위로 바꿔 써도 원문 수치로 본다.
+    (기관고유·지역재난 보고서에서 '14,160백만원'을 '141.6억 원'으로 쓴 줄이 26줄 표시됐음) 단위를 틀리면 그대로 표시."""
+    from rdagents.dataflows.output_validation import mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("사업규모 : 14,160백만원, 연구개발비 4,716,690 천원, 전체 2.11조 원\n\n"
+                      "| 연도 | 총사업비(백만원) |\n|---|---|\n| 2024 | 4,500 |\n", encoding="utf-8")
+    set_current_report(str(report), project_id="money-units")
+    docs = {"04.md": "총 141.6억 원, 연구개발비 47.2억 원, 2024년 45억 원, 전체 21,100억 원\n"
+                     "총 1,416억 원\n"}                                  # 단위를 10배 틀림 -> 표시
+    assert mark_unsupported_numbers(docs)[1] == [("04.md", 2, ["1416억"])]
+    # 줄번호 없는 출처 뒤의 다른 출처를 한 인용으로 묶지 않는다 (기관고유 보고서 07b JSON에서 3건 오탐)
+    from rdagents.dataflows.output_validation import build_validation_report
+    text = build_validation_report({"07b.json": '{"q":"【출처: 전문위원회 의견】","a":"총 141.6억 원 [출처: 원문.md L1-L1]"}'})
+    assert "**출처 검증 이슈 수**: 0" in text
+    # 1억 미만·1조 미만 금액은 그 단위로 바꾸지 않는다 (반올림 허용 범위로 지어낸 값이 통과했음)
+    report.write_text("피해액 7백만원, 투자 9,600억 원\n", encoding="utf-8")
+    set_current_report(str(report), project_id="money-units")
+    assert mark_unsupported_numbers({"05.md": "예산 0.1억 원, 매출 1조 원\n"})[1] == [("05.md", 1, ["0.1억", "1조"])]
+
 def test_precheck_includes_number_crosscheck():
     """사전 점검에 숫자 검산(표 합계·비율·본문 합계)이 붙고, 불일치는 패널·질의 요약에 최대 3건 올라간다."""
     from rdagents.dataflows.plan_precheck import run_precheck
@@ -842,6 +865,11 @@ def test_plan_precheck_rules():
     assert "[시급성] 시급성의 정량 근거 — 근거 약함" in brief and "[출처: a.md L3-L3] (p.2)" in brief
     assert "추진 배경" not in brief                            # 충족 항목은 요약에서 뺀다 (토큰 절약)
     assert run_precheck(None, None) == ("", "")                # 샘플 JSON 모드면 점검 안 함
+    # 다른 표현의 배경·목표 (지역재난 2단계 요약 보고서에서 누락으로 나왔던 문장)
+    other = ["## 2. 추진 목적과 핵심 문제", "- 최종성과물: 기술개발 및 실증 20건",
+             "- R&D 기여도: 1차년도 대비 5차년도 10% 향상 목표"]
+    status = {r.item.key: r.status for r in check_lines(other)}
+    assert status["background"] == "충족" and status["goal_kpi"] == "충족"
 
 
 def test_panel_prompt_receives_precheck_brief():
