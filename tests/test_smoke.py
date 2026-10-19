@@ -203,7 +203,7 @@ def test_table_unit_and_computed_values_are_not_marked(tmp_path):
 
 def test_million_won_amounts_match_eok_in_outputs(tmp_path):
     """원문의 백만원·천원 금액과 억·조 금액을 산출물이 다른 단위로 바꿔 써도 원문 수치로 본다.
-    (기관고유·지역재난 보고서에서 '14,160백만원'을 '141.6억 원'으로 쓴 줄이 26줄 표시됐음) 단위를 틀리면 그대로 표시."""
+    (기관고유 샘플 보고서에서 '14,160백만원'을 '141.6억 원'으로 쓴 줄이 26줄 표시됐음) 단위를 틀리면 그대로 표시."""
     from rdagents.dataflows.output_validation import mark_unsupported_numbers
     from rdagents.dataflows.project_loader import set_current_report
 
@@ -865,9 +865,9 @@ def test_plan_precheck_rules():
     assert "[시급성] 시급성의 정량 근거 — 근거 약함" in brief and "[출처: a.md L3-L3] (p.2)" in brief
     assert "추진 배경" not in brief                            # 충족 항목은 요약에서 뺀다 (토큰 절약)
     assert run_precheck(None, None) == ("", "")                # 샘플 JSON 모드면 점검 안 함
-    # 다른 표현의 배경·목표 (지역재난 2단계 요약 보고서에서 누락으로 나왔던 문장)
-    other = ["## 2. 추진 목적과 핵심 문제", "- 최종성과물: 기술개발 및 실증 20건",
-             "- R&D 기여도: 1차년도 대비 5차년도 10% 향상 목표"]
+    # 다른 표현의 배경·목표 (근거 파일이 나뉜 보고서에서 누락으로 나왔던 표현)
+    other = ["## 1. 추진 목적과 핵심 문제", "- 최종성과물: 시제품 3종",
+             "- 대응시간: 2년차 대비 4년차 15% 단축 목표"]
     status = {r.item.key: r.status for r in check_lines(other)}
     assert status["background"] == "충족" and status["goal_kpi"] == "충족"
 

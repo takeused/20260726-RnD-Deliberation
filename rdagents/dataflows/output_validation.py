@@ -119,7 +119,7 @@ def _split_number(token: str) -> tuple[float, int, str]:
     return float(digits), len(digits.split(".")[1]) if "." in digits else 0, m.group(2)
 
 
-# 원문은 '14,160백만원'인데 산출물은 '141.6억 원'으로 바꿔 쓴다 (기관고유·지역재난 보고서에서 검증 총사업비가 26·23줄 표시됐음)
+# 원문은 '14,160백만원'인데 산출물은 '141.6억 원'으로 바꿔 쓴다 (기관고유 샘플 보고서에서 검증 총사업비가 26줄 표시됐음)
 _SMALL_MONEY_RE = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(천\s*만\s*원|백\s*만\s*원|만\s*원|천\s*원)")
 
 
