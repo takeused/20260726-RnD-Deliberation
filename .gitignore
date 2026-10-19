@@ -1,4 +1,5 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
 .env
@@ -15,3 +16,4 @@ sample_data/(기획보고서)*
 sample_data/NTIS_유사사업.md
 sample_data/정책근거.md
 sample_data/시장조사.txt
+sample_data/regional-disaster-safety-phase2_input/
