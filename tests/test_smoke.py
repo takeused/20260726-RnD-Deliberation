@@ -80,6 +80,11 @@ def test_verified_budget_facts_anchor_budget_and_final_decision(tmp_path):
     )
     with pytest.raises(ValueError, match="검증 예산안"):
         align_final_decision_to_budget(decision, 226.0)
+    # 검증 예산도, 금액 있는 조정안도 없으면 승인류 결정은 예산을 지어낸 것 -> 보류하라고 되돌림 (NDMI groq6)
+    with pytest.raises(ValueError, match="보류"):
+        align_final_decision_to_budget(decision, None, budget_known=False)
+    deferred = FinalDecision(verdict="보류", executive_summary="보류", review_rationale="예산액 미기재")
+    assert align_final_decision_to_budget(deferred, None, budget_known=False) is deferred
 
 
 def test_citation_content_check_flags_wrong_line(tmp_path):
@@ -199,6 +204,38 @@ def test_table_unit_and_computed_values_are_not_marked(tmp_path):
     assert marked["07.md"].splitlines()[0] == "Q4. 비율 0.3%와 계산값 3.2% 중 어느 것이 정확합니까?"
     # 사전 점검 없이는 계산 값 3.2%는 원문에 없는 수치
     assert mark_unsupported_numbers({"07.md": "계산값 3.2%"})[1] == [("07.md", 1, ["3.2%"])]
+
+
+def test_numbers_are_marked_as_nodes_write(tmp_path):
+    """노드가 쓴 보고서·토론 글에 바로 표시를 붙여 뒤 노드가 표시된 글을 읽는다. 흐름 제어 값과 JSON 필드는 그대로."""
+    from rdagents.dataflows.output_validation import UNSUPPORTED_NOTE
+    from rdagents.dataflows.project_loader import set_current_report
+    from rdagents.graph.setup import _timed_node
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원, 사망 6명\n", encoding="utf-8")
+    set_current_report(str(report), project_id="in-flight")
+    plan = '{"key_concerns": "피해 1,200억 원"}'
+    node = _timed_node("Panel Examiner", lambda state: {
+        "tech_value_report": "총사업비 120억 원, 피해 1,200억 원 [출처: 원문.md L1-L1]",
+        "review_plan": plan,
+        "review_debate_state": {"history": "\n[심사위원 패널]: 피해 1,200억 원 근거는?\n", "current_response": "Examiner",
+                                "count": 1},
+    })
+    result = node({"precheck_md": "", "execution_metrics": []})
+    assert result["tech_value_report"].endswith(UNSUPPORTED_NOTE.format("1200억"))
+    assert UNSUPPORTED_NOTE.format("1200억") in result["review_debate_state"]["history"]
+    assert result["review_debate_state"]["current_response"] == "Examiner"   # 흐름 제어 값
+    import json
+    assert json.loads(result["review_plan"])["key_concerns"].endswith(UNSUPPORTED_NOTE.format("1200억"))  # JSON 글 값
+    assert _timed_node("x", lambda s: {"review_plan": "JSON 아님 1,200억 원"})({})["review_plan"] == "JSON 아님 1,200억 원"
+    # 다음 노드가 표시된 기록에 덧붙여도 표시가 두 번 붙지 않는다
+    again = _timed_node("Defender", lambda state: {"review_debate_state": {
+        "history": result["review_debate_state"]["history"] + "[발표자]: 사망 6명\n"}})({"execution_metrics": []})
+    assert again["review_debate_state"]["history"].count("⚠️") == 1
+    # 근거 원칙이 표시된 수치를 옮겨 쓰지 말라고 알린다
+    from rdagents.agents.utils.agent_utils import get_language_instruction
+    assert "⚠️[원문에 없는 수치: …]" in get_language_instruction()
 
 
 def test_million_won_amounts_match_eok_in_outputs(tmp_path):
@@ -407,7 +444,7 @@ def test_groq_profile_uses_short_context_and_json_schema():
 
     profile = main.PROFILES["test-groq"]
     assert profile["llm_provider"] == "groq"
-    assert profile["prompt_char_budget"] == 900
+    assert profile["prompt_char_budget"] == 800
     assert get_capabilities(profile["deep_think_llm"]).preferred_structured_method == "json_schema"
     assert "test-cerebras" not in main.PROFILES  # Cerebras는 정책 변경으로 쓰지 않음
     assert main._validate_provider_auth("groq") in (None, "groq 프로바이더에 필요한 GROQ_API_KEY가 설정되어 있지 않습니다.")

@@ -230,6 +230,19 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     return marked, found
 
 
+def mark_texts(texts: Mapping[str, str], precheck_md: str = "") -> dict[str, str]:
+    """심의 도중 노드가 쓴 글에 바로 표시를 붙인다 (다음 노드가 표시된 글을 읽게).
+
+    groq5 실행에서 공방에서 처음 나온 '1,200억 원'이 4줄로 번졌다. 표시는 실행이 끝난 뒤에만 붙어서,
+    뒤 노드들은 지어낸 수치를 앞 단계 산출물의 사실로 읽고 이어 썼다.
+    """
+    try:
+        marked, _ = mark_unsupported_numbers({"00b_사전점검.md": precheck_md, **texts})
+    except RuntimeError:
+        return dict(texts)  # 원문이 설정되지 않음 (샘플 JSON 모드)
+    return {key: marked[key] for key in texts}
+
+
 UNSUPPORTED_SUMMARY_TITLE = "## 검증 안 된 수치 요약 (수치별)"
 
 
