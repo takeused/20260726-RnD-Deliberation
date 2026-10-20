@@ -116,6 +116,13 @@ def main():
         help="대비할 심의 관문. 관문별로 심사위원 성향과 질의 각도가 달라집니다. (기본: 부처심의)",
     )
     parser.add_argument(
+        "--project-type",
+        choices=["auto", "산업형", "공공임무형", "혼합형"],
+        default=None,
+        help="사업 유형. 심의기준·정량 평가 가중치·사전 점검 항목·필수 질의가 유형에 따라 달라집니다. "
+             "(기본: auto, 원문 키워드로 판별)",
+    )
+    parser.add_argument(
         "--evidence",
         action="append",
         default=[],
@@ -176,6 +183,8 @@ def main():
             overrides.pop(key, None)
     if args.gate:
         overrides["review_gate"] = args.gate
+    if args.project_type:
+        overrides["project_type"] = args.project_type
     overrides = overrides or None
 
     provider = (

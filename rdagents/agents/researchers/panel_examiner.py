@@ -31,7 +31,7 @@ def create_panel_examiner(llm):
             "4. 예산 규모와 비목·단가의 산출 근거를 묻는 질의를 공방 전체에서 최소 1회 포함하세요. "
             "이전 라운드에서 이미 물었다면 반복하지 말고, 방어가 부실했던 경우에만 재차 파고드세요.\n"
             "5. 예의는 갖추되 봐주지 마세요. 국가 예산이 걸린 심의입니다.\n"
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
         )

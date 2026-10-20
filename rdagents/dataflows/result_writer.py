@@ -181,6 +181,9 @@ def _write_html_report(out_dir: Path, project_id: str, metadata: dict) -> Path:
     provider = escape(str(metadata.get("provider", "알 수 없음")))
     deep_model = escape(str(metadata.get("deep_model", "알 수 없음")))
     review_year = escape(str(metadata.get("review_year", "알 수 없음")))
+    # 사업 유형은 사전 점검 문서 맨 앞의 판별 결과에서 읽는다 (다시 렌더링할 때도 같은 값)
+    type_match = re.search(r"- 판별: \*\*([^*]+)\*\* \(([^)]*)\)", documents.get("00b_사전점검.md", ""))
+    project_type = f"{type_match.group(1)} ({type_match.group(2)})" if type_match else "판별 기록 없음"
 
     appendix_items = []
     appendix_files = [
@@ -229,7 +232,7 @@ details {{ border:1px solid var(--line); margin:10px 0; background:#fcfdfd; }} s
 <header class="masthead"><p class="kicker">국가연구개발사업 심의결과 보고서</p><h1>{escape(project_name)}</h1><p class="subtitle">신규사업 심의 시뮬레이션 결과 · 의사결정용 요약본</p><div class="meta"><span><strong>심의 기준연도</strong> {review_year}</span><span><strong>수행 모델</strong> {provider} / {deep_model}</span><span><strong>실행 ID</strong> {execution_id}</span></div></header>
 <div class="layout"><nav class="toc" aria-label="보고서 목차"><p>목차</p><a href="#decision">심의 의결</a>{toc_unsupported}<a href="#overview">사업 개요</a><a href="#issues">핵심 쟁점</a><a href="#conditions">이행 조건</a><a href="#questions">질의 대비</a><a href="#appendix">상세 검토자료</a></nav><main class="content" id="report-main">
 <section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div><div class="notice"><strong>생성물 근거 검증</strong><br>{_inline_html(validation_status)} · 상세 내용은 부록의 생성물 근거 검증을 확인하세요.</div></div></div>{unsupported}</section>
-<section id="overview"><h2>2. 사업 개요</h2><dl class="facts"><div class="fact"><dt>사업명</dt><dd>{_inline_html(project_name)}</dd></div><div class="fact"><dt>심의 기준연도</dt><dd>{review_year}년</dd></div><div class="fact"><dt>예산 판단</dt><dd>{_inline_html(approved_budget)}</dd></div></dl><h3>입력 자료</h3><div class="source">{_markdown_to_html(source_manifest)}</div></section>
+<section id="overview"><h2>2. 사업 개요</h2><dl class="facts"><div class="fact"><dt>사업명</dt><dd>{_inline_html(project_name)}</dd></div><div class="fact"><dt>심의 기준연도</dt><dd>{review_year}년</dd></div><div class="fact"><dt>예산 판단</dt><dd>{_inline_html(approved_budget)}</dd></div><div class="fact"><dt>사업 유형</dt><dd>{_inline_html(project_type)}</dd></div></dl><h3>입력 자료</h3><div class="source">{_markdown_to_html(source_manifest)}</div></section>
 <section id="issues"><h2>3. 핵심 심의 쟁점 및 보완 요구</h2>{_markdown_to_html(documents.get("08_보완권고.md", "내용이 없습니다."))}</section>
 <section id="conditions"><h2>4. 조건부 승인 이행 조건</h2>{_markdown_to_html(final.split("**이행 조건**:", 1)[1].strip() if "**이행 조건**:" in final else final)}</section>
 <section id="questions"><h2>5. 예상 질의 및 답변 준비</h2>{_markdown_to_html(documents.get("07_예상질의응답.md", "내용이 없습니다."))}</section>

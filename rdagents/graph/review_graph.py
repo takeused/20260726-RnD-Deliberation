@@ -10,6 +10,8 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from rdagents.dataflows.plan_precheck import run_precheck
+from rdagents.dataflows.project_type import classify as classify_project_type
+from rdagents.dataflows.project_type import render_section as render_type_section
 from rdagents.default_config import DEFAULT_CONFIG
 from rdagents.agents.utils.gate_profiles import get_gate_profile
 from rdagents.dataflows.memory_log import append_memory, load_past_context
@@ -17,7 +19,9 @@ from rdagents.dataflows.question_bank import load_question_bank
 from rdagents.dataflows.project_loader import (
     get_project_facts,
     get_report_text_and_name,
+    get_source_lines,
     get_source_manifest,
+    load_project,
     set_current_project,
     set_current_report,
 )
@@ -132,8 +136,14 @@ class RDReviewGraph:
             max_chars=self.config["max_memory_chars"],
         )
 
+        # 사업 유형 판별 (규칙 기반): 모든 노드의 심의기준·평가 가중치·점검 항목·필수 질의가 이 결과를 따른다
+        type_result = classify_project_type(
+            get_source_lines() or self._sample_lines(project_id), self.config.get("project_type")
+        )
         # 원문 모드면 심의 전에 규칙 기반 사전 점검 (LLM 호출 없음)
-        precheck_md, precheck_brief = run_precheck(*get_report_text_and_name())
+        precheck_md, precheck_brief = run_precheck(*get_report_text_and_name(), type_result.project_type)
+        # 판별 결과를 사전 점검 문서 맨 앞에 둔다 ('## 숫자 검산' 절 뒤에 두면 수치 표시의 계산값 근거에 섞임)
+        precheck_md = render_type_section(type_result) + ("\n\n" + precheck_md if precheck_md else "")
 
         execution_id_provided = execution_id is not None
         execution_id = execution_id or uuid4().hex
@@ -150,6 +160,7 @@ class RDReviewGraph:
             ),
             precheck_md=precheck_md,
             precheck_brief=precheck_brief,
+            project_type=type_result.project_type,
             prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
             tool_result_char_budget=int(self.config.get("tool_result_char_budget") or 0),
             max_analyst_tool_calls=int(self.config.get("max_analyst_tool_calls") or 0),
@@ -160,6 +171,8 @@ class RDReviewGraph:
                 "quick_model": self.config["quick_think_llm"],
                 "review_year": review_year,
                 "review_gate": self.config["review_gate"],
+                "project_type": type_result.project_type,
+                "project_type_decided_by": type_result.decided_by,
                 "checkpoint_enabled": self.config["checkpoint_enabled"],
                 "checkpoint_path": self.config["checkpoint_path"] if self.config["checkpoint_enabled"] else None,
             },
@@ -230,6 +243,14 @@ class RDReviewGraph:
                 print(f"[경고] 심의 이력 기록 실패: {exc}")
 
         return final_state, decision
+
+    def _sample_lines(self, project_id: str) -> dict[str, list[str]]:
+        """구조화 샘플 JSON 모드의 판별 입력: JSON 본문 줄 (원문 모드에서는 쓰지 않음)."""
+        try:
+            data = load_project(project_id, self.config["sample_data_dir"])
+        except (FileNotFoundError, ValueError):
+            return {}
+        return {f"{project_id}.json": json.dumps(data, ensure_ascii=False, indent=1).splitlines()}
 
     def close(self) -> None:
         """체크포인트 SQLite 연결을 닫는다."""

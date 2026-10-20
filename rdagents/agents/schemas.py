@@ -257,6 +257,7 @@ class CriterionTag(str, Enum):
     IMPORTANCE = "기술개발의 중요성"
     URGENCY = "시급성"
     BUDGET = "예산 타당성"  # 예산 규모·비목 산출 근거. 3대 기준이 아니어도 감액 결론을 바꾸므로 별도 보장
+    FIELD = "현장 적용·확산"  # 공공임무형: 수요기관 참여·실증·제도화·사후 운영 재원. 이 유형에서만 별도 보장
     OTHER = "기타"
 
 
@@ -331,6 +332,18 @@ class ReviewPreparationReport(BaseModel):
                 + ", ".join(tag.value for tag in sorted(missing, key=lambda t: t.value))
             )
         return self
+
+
+def require_type_questions(report: ReviewPreparationReport, project_type: str | None) -> ReviewPreparationReport:
+    """사업 유형별 필수 질의. 공공임무형은 '현장 적용·확산' 질의가 1건 이상 있어야 한다.
+
+    재난안전 R&D는 기술을 개발해도 현장에 쓰이지 않는다는 지적이 잦은데, 3대 기준·예산 질의만 보장하면
+    수요기관·제도화·사후 운영을 묻는 질의가 빠져도 통과한다.
+    """
+    if project_type == "공공임무형" and CriterionTag.FIELD not in {q.criterion for q in report.questions}:
+        raise ValueError("공공임무형 사업이므로 '현장 적용·확산'(수요기관 참여, 실증 이후 제도화 경로, "
+                         "사업 종료 후 운영·유지관리 주체와 재원)을 묻는 질의가 최소 1건 필요합니다.")
+    return report
 
 
 def render_anticipated_questions(report: ReviewPreparationReport) -> str:
@@ -470,7 +483,11 @@ class ScoreItem(BaseModel):
 
 
 class DecisionQualityReport(BaseModel):
-    """결정과 독립적으로 산출하는 정량 평가 및 불확실성 보고서."""
+    """결정과 독립적으로 산출하는 정량 평가 및 불확실성 보고서.
+
+    평가 항목은 모든 사업 유형의 합집합이다. 유형마다 쓰는 항목·라벨·가중치는 TYPE_QUALITY_WEIGHTS가 정하고,
+    가중치가 없는 항목은 기본값으로 두면 된다 (예: 산업형의 재난관리 단계 적합성).
+    """
 
     government_support: ScoreItem = Field(default_factory=ScoreItem)
     technology_importance: ScoreItem = Field(default_factory=ScoreItem)
@@ -478,6 +495,8 @@ class DecisionQualityReport(BaseModel):
     technical_feasibility: ScoreItem = Field(default_factory=ScoreItem)
     economic_feasibility: ScoreItem = Field(default_factory=ScoreItem)
     execution_capability: ScoreItem = Field(default_factory=ScoreItem)
+    field_deployment: ScoreItem = Field(default_factory=ScoreItem, description="현장 적용·확산(공공임무형) 또는 사업화·확산(산업형) 경로.")
+    disaster_phase_fit: ScoreItem = Field(default_factory=ScoreItem, description="재난관리 단계(예방·대비·대응·복구) 적합성. 공공임무형만.")
     overall_score: float = Field(default=0, ge=0, le=100)
     overall_confidence: float = Field(default=0, ge=0, le=100)
     disagreements: list[str] = Field(default_factory=list)
@@ -487,48 +506,76 @@ class DecisionQualityReport(BaseModel):
 
     @model_validator(mode="after")
     def calculate_overall_score(self):
-        self.overall_score = round(
-            sum(getattr(self, key).score * weight
-                for key, (_, weight) in QUALITY_WEIGHTS.items()), 1
-        )
-        self.overall_confidence = round(
-            sum(getattr(self, key).confidence * weight
-                for key, (_, weight) in QUALITY_WEIGHTS.items()), 1
-        )
-        return self
+        return apply_quality_weights(self, None)
 
 
-# 품질 평가 기준의 단일 정의: (한글 라벨, 가중치). 검증자·평가표·프롬프트가 모두 참조.
-QUALITY_WEIGHTS: dict[str, tuple[str, float]] = {
-    "government_support": ("정부지원 필요성", 0.25),
-    "technology_importance": ("기술개발 중요성", 0.20),
-    "urgency": ("시급성", 0.15),
-    "technical_feasibility": ("기술적 실현 가능성", 0.15),
-    "economic_feasibility": ("경제·공공가치 타당성", 0.15),
-    "execution_capability": ("수행 역량", 0.10),
+# 품질 평가 기준의 단일 정의: 사업 유형 -> {항목: (한글 라벨, 가중치)}. 검증자·평가표·프롬프트가 모두 참조.
+# 공공임무형은 경제성(B/C) 비중을 낮추고 현장 적용·확산과 재난관리 단계 적합성을 넣었다. 재난안전 R&D는
+# 기술을 개발해도 현장에 쓰이지 않는다는 지적이 잦고, 시장성 잣대로 보면 공익 사업이 감점되기 때문이다.
+# 가중치는 비교·점검용 초안이며 공식 배점이 아니다.
+TYPE_QUALITY_WEIGHTS: dict[str, dict[str, tuple[str, float]]] = {
+    "공공임무형": {
+        "government_support": ("정부지원 필요성 (국가 책무·시장실패)", 0.20),
+        "technology_importance": ("공공가치·피해저감 효과", 0.20),
+        "urgency": ("시급성", 0.15),
+        "disaster_phase_fit": ("재난관리 단계 적합성", 0.10),
+        "field_deployment": ("현장 적용·확산 경로", 0.15),
+        "technical_feasibility": ("기술적 실현 가능성", 0.08),
+        "execution_capability": ("수행 역량·부처 간 역할", 0.07),
+        "economic_feasibility": ("비용효과성", 0.05),
+    },
+    "산업형": {
+        "government_support": ("정부지원 필요성 (시장실패·민간 매칭)", 0.20),
+        "technology_importance": ("기술개발 중요성 (기술 주권·산업 파급)", 0.20),
+        "urgency": ("시급성", 0.15),
+        "technical_feasibility": ("기술적 실현 가능성", 0.15),
+        "economic_feasibility": ("경제성·시장성", 0.15),
+        "field_deployment": ("사업화·확산 경로", 0.10),
+        "execution_capability": ("수행 역량", 0.05),
+    },
+    "혼합형": {
+        "government_support": ("정부지원 필요성", 0.20),
+        "technology_importance": ("기술개발 중요성·공공가치", 0.20),
+        "urgency": ("시급성", 0.15),
+        "technical_feasibility": ("기술적 실현 가능성", 0.15),
+        "economic_feasibility": ("경제·공공가치 타당성", 0.10),
+        "field_deployment": ("현장 적용·사업화 경로", 0.10),
+        "execution_capability": ("수행 역량", 0.10),
+    },
 }
+QUALITY_WEIGHTS = TYPE_QUALITY_WEIGHTS["혼합형"]  # 유형을 모를 때 (구조화 샘플 모드 기본값)
 
 
-def quality_weights_text() -> str:
-    """프롬프트 주입용 가중치 설명 문자열."""
+def quality_weights(project_type: str | None = None) -> dict[str, tuple[str, float]]:
+    return TYPE_QUALITY_WEIGHTS.get(project_type or "혼합형", QUALITY_WEIGHTS)
+
+
+def apply_quality_weights(report: "DecisionQualityReport", project_type: str | None) -> "DecisionQualityReport":
+    """사업 유형의 가중치로 종합점수·종합 신뢰도를 다시 계산한다."""
+    weights = quality_weights(project_type)
+    report.overall_score = round(sum(getattr(report, k).score * w for k, (_, w) in weights.items()), 1)
+    report.overall_confidence = round(sum(getattr(report, k).confidence * w for k, (_, w) in weights.items()), 1)
+    return report
+
+
+def quality_weights_text(project_type: str | None = None) -> str:
+    """프롬프트 주입용 가중치 설명 문자열 (항목 필드명 포함: LLM이 어느 필드에 점수를 넣을지 알게)."""
     return ", ".join(
-        f"{label} {weight * 100:.0f}%" for label, weight in QUALITY_WEIGHTS.values()
+        f"{label}({key}) {weight * 100:.0f}%" for key, (label, weight) in quality_weights(project_type).items()
     )
 
 
-_QUALITY_LABELS = [
-    (key, label, round(weight * 100)) for key, (label, weight) in QUALITY_WEIGHTS.items()
-]
-
-
-def render_quality_scorecard(report: DecisionQualityReport) -> str:
+def render_quality_scorecard(report: DecisionQualityReport, project_type: str | None = None) -> str:
     lines = [
         "# 정량 평가표",
+        "",
+        f"- **사업 유형**: {project_type or '혼합형'} (유형별 평가 항목·가중치 적용)",
         "",
         "| 평가기준 | 가중치 | 점수 | 신뢰도 | 핵심 근거 |",
         "|---|---:|---:|---:|---|",
     ]
-    for key, label, weight in _QUALITY_LABELS:
+    for key, (label, weight) in quality_weights(project_type).items():
+        weight = round(weight * 100)
         item = getattr(report, key)
         refs = "; ".join(item.evidence_refs) or "근거 참조 없음"
         lines.append(

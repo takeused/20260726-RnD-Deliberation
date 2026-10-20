@@ -13,6 +13,7 @@ _ENV_OVERRIDES = {
     "RDAGENTS_MAX_AUDIT_ROUNDS":     "max_audit_rounds",
     "RDAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "RDAGENTS_REVIEW_GATE":         "review_gate",
+    "RDAGENTS_PROJECT_TYPE":        "project_type",
     "RDAGENTS_PROMPT_CHAR_BUDGET":  "prompt_char_budget",
     "RDAGENTS_TOOL_RESULT_CHAR_BUDGET": "tool_result_char_budget",
     "RDAGENTS_MAX_ANALYST_TOOL_CALLS": "max_analyst_tool_calls",
@@ -118,6 +119,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "report_retrieval_top_k": 4,
     # 심의 관문 (부처심의 / 예타 / 예산조정 / 국회)
     "review_gate": "부처심의",
+    # 사업 유형: auto면 원문 키워드로 판별 (dataflows/project_type.py), 산업형·공공임무형·혼합형이면 그대로 사용
+    "project_type": "auto",
     # 노드별 긴 입력 절단 예산 (문자 수, 0 = 무제한). 소형 컨텍스트 백엔드용
     "prompt_char_budget": 0,
     # 분석가가 LLM에 보내는 도구 결과의 총 문자 수 상한 (0=무제한). 도구를 부를수록 결과가 쌓여
