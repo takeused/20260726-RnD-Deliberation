@@ -364,6 +364,11 @@ def test_rerender_and_compare_runs(tmp_path):
     state, _ = graph.propagate(report_path=str(report_path), review_year="2027")
     graph.close()
     run = Path(state["saved_results_dir"])
+    # 사업 유형 판별이 상태·사전 점검 문서·정량 평가표·HTML까지 이어진다 (공공 키워드 1줄뿐이라 혼합형)
+    assert state["project_type"] == "혼합형"
+    assert (run / "00b_사전점검.md").read_text(encoding="utf-8").startswith("## 사업 유형 판별")
+    assert "- **사업 유형**: 혼합형" in (run / "09_정량평가표.md").read_text(encoding="utf-8")
+    assert "<dt>사업 유형</dt><dd>혼합형 (자동 판별)</dd>" in (run / "심의종합리포트.html").read_text(encoding="utf-8")
 
     before = collect(str(run))
     assert before["LLM 호출 수"] > 10                             # 가짜 응답의 예산 100.0억도 원문에 없어 표시됨
@@ -460,10 +465,21 @@ def test_quality_score_is_weighted_in_code():
         technical_feasibility=ScoreItem(score=40, confidence=80),
         economic_feasibility=ScoreItem(score=20, confidence=80),
         execution_capability=ScoreItem(score=0, confidence=80),
+        field_deployment=ScoreItem(score=50, confidence=80),
+        disaster_phase_fit=ScoreItem(score=90, confidence=80),
         overall_score=99,  # 모델 입력값은 코드 계산값으로 덮어써야 함
     )
-    assert report.overall_score == 59.0
+    # 유형을 모르면 혼합형 가중치: 20/20/15/15/10/10/10 (재난관리 단계 적합성은 쓰지 않음)
+    assert report.overall_score == 58.0
     assert report.overall_confidence == 80.0
+    from rdagents.agents.schemas import TYPE_QUALITY_WEIGHTS, apply_quality_weights, render_quality_scorecard
+    for weights in TYPE_QUALITY_WEIGHTS.values():
+        assert round(sum(w for _, w in weights.values()), 6) == 1.0
+    # 공공임무형: 정부지원 20, 공공가치 20, 시급성 15, 단계 적합성 10, 현장 적용 15, 실현가능성 8, 역량 7, 비용효과성 5
+    assert apply_quality_weights(report, "공공임무형").overall_score == 65.7
+    table = render_quality_scorecard(report, "공공임무형")
+    assert "| 현장 적용·확산 경로 | 15% |" in table and "| 비용효과성 | 5% |" in table
+    assert "재난관리 단계 적합성" not in render_quality_scorecard(report, "산업형")
 
 
 def test_common_prompt_forbids_fabricated_evidence():
@@ -478,11 +494,53 @@ def test_common_prompt_forbids_fabricated_evidence():
 def test_review_criteria_adapts_to_public_safety_projects():
     from rdagents.agents.utils.review_criteria import get_review_criteria
 
-    criteria = get_review_criteria()
-    assert "공공임무·사회문제 해결형" in criteria
-    assert "인명·재산 피해 저감" in criteria
-    assert "지역 안전격차" in criteria
-    assert "억지 B/C" in criteria
+    public = get_review_criteria("공공임무형")
+    assert "사업 유형: 공공임무형" in public
+    for phrase in ("인명·재산 피해 저감", "지역 간 안전격차", "억지 B/C", "재난관리 단계 적합성",
+                   "수요기관", "운영·유지관리 주체와 재원", "부처 간 역할 분담"):
+        assert phrase in public
+    industry = get_review_criteria("산업형")
+    assert "기술 주권" in industry and "재난관리 단계" not in industry
+    assert "사업 유형: 혼합형" in get_review_criteria() == get_review_criteria("혼합형")  # 유형을 모르면 혼합형
+
+
+def test_project_type_drives_precheck_and_required_questions(tmp_path):
+    """사업 유형을 규칙으로 판별해 사전 점검 항목과 필수 질의가 달라진다. --project-type이 판별보다 우선."""
+    import pytest
+
+    from rdagents.agents.schemas import CriterionTag, ReviewPreparationReport, require_type_questions
+    from rdagents.dataflows.plan_precheck import check_lines, checklist_for
+    from rdagents.dataflows.project_type import classify, render_section
+
+    public = {"a.md": ["## 추진 배경", "- 최근 5년 풍수해 인명 피해 증가, 재난 대응 공백", "- 소방 현장 대피 지원",
+                       "- 피해 저감 목표 20%"]}
+    industry = {"b.md": ["- 글로벌 시장 규모 10조 원, 수출 확대", "- 기술 이전과 사업화로 매출 창출"]}
+    assert classify(public).project_type == "공공임무형"
+    assert classify(industry).project_type == "산업형"
+    assert classify({**public, **industry}).project_type == "혼합형"
+    assert classify({}).project_type == "혼합형"                              # 판별할 원문 없음
+    forced = classify(public, override="산업형")
+    assert (forced.project_type, forced.decided_by) == ("산업형", "사용자 지정")
+    section = render_section(classify(public))
+    assert "- 판별: **공공임무형** (자동 판별)" in section and "[출처: a.md L2-L2]" in section
+
+    # 공공임무형·혼합형만 재난안전 점검 항목(수요기관·재난관리 단계·제도화·운영 재원)이 붙는다
+    assert len(checklist_for("산업형")) == 9 and len(checklist_for("공공임무형")) == 13
+    status = {r.item.key: r.status for r in check_lines(
+        ["- 수요기관: 시·도 재난안전대책본부 참여", "- 대응 단계의 상황 공유 공백", "- 운영 매뉴얼 개정 반영"],
+        checklist_for("공공임무형"))}
+    assert status["demand_agency"] == status["disaster_phase"] == status["institutionalize"] == "충족"
+    assert status["maintenance"] == "누락"
+
+    # 공공임무형은 '현장 적용·확산' 질의가 있어야 한다 (산업형은 없어도 통과)
+    from rdagents.dataflows.token_estimate import sample_instance
+    report = sample_instance(ReviewPreparationReport)
+    assert require_type_questions(report, "공공임무형") is report
+    without = report.model_copy(update={"questions": [q for q in report.questions if q.criterion != CriterionTag.FIELD]
+                                        + [report.questions[0]]})
+    with pytest.raises(ValueError, match="현장 적용·확산"):
+        require_type_questions(without, "공공임무형")
+    assert require_type_questions(without, "산업형") is without
 
 
 def test_protected_report_keeps_internal_navigation_unlocked():

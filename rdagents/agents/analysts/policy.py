@@ -22,7 +22,7 @@ def create_policy_analyst(llm):
             "4. **범부처·중앙-지방 정책 정합성**: 관련 중앙부처와 지방정부의 역할, 기존 재난안전 사업과의 연계·중복은 적절한가?\n"
             "5. **정책 우선순위**: 현 시점에서 이 사업의 정책적 우선순위는 어느 정도인가?\n\n"
             "반드시 구체적인 정책 문서를 인용하여 분석하고, Markdown 표로 핵심 결과를 정리하세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

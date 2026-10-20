@@ -23,7 +23,7 @@ def create_tech_trend_analyst(llm):
             "5. **적시성(Timeliness)**: 지금 이 시점에 이 사업을 시작하는 것이 적절한가? 너무 이르거나 너무 늦은 것은 아닌가?\n\n"
             "반드시 구체적인 근거를 기반으로 분석하고, 보고서 말미에 핵심 분석 결과를 정리한 "
             "Markdown 표를 첨부하세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

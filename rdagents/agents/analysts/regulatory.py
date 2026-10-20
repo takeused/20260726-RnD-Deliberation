@@ -22,7 +22,7 @@ def create_regulatory_analyst(llm):
             "5. **규제 샌드박스 필요성**: 현행 규제로 인해 연구나 사업화가 불가능하여 규제 특례가 필요한가?\n\n"
             "분석 내용을 종합하여 사업 추진에 치명적인(Showstopper) 규제 리스크가 있는지 판단하고, "
             "Markdown 표로 핵심 결과를 정리하세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

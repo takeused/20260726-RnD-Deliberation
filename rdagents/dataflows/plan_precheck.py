@@ -68,6 +68,31 @@ CHECKLIST: tuple[CheckItem, ...] = (
               question="연구가 끝난 뒤 결과는 누가, 어떻게 운영·활용합니까?"),
 )
 
+# 공공임무형(재난안전 등)·혼합형에만 추가하는 항목. 재난안전 R&D는 기술을 개발해도 현장에 쓰이지 않는다는 지적이
+# 잦아, 수요기관 참여·제도화·사후 운영 재원과 어느 재난관리 단계의 공백을 메우는지가 보고서에 있어야 한다.
+PUBLIC_CHECKLIST: tuple[CheckItem, ...] = (
+    CheckItem("demand_agency", "수요기관 참여", "현장 적용·확산",
+              (r"수요\s*(?:기관|처|자)", r"실\s*수요", r"현장\s*(?:수요|의견|요구)", r"(?:지자체|소방|지방자치단체).{0,15}참여",
+               r"재난\s*관리\s*책임\s*기관"),
+              question="현장에서 이 기술을 쓸 수요기관은 어디이며, 기획 단계부터 어떻게 참여했습니까?"),
+    CheckItem("disaster_phase", "재난관리 단계 명시", "기술개발의 중요성",
+              (r"(?:예방|대비|대응|복구)\s*단계", r"재난\s*관리\s*(?:단계|주기|전\s*주기)",
+               r"예방\s*[·ㆍ,\s]\s*대비", r"대응\s*[·ㆍ,\s]\s*복구"),
+              question="예방·대비·대응·복구 중 어느 단계의 어떤 공백을 메우는 기술입니까?"),
+    CheckItem("institutionalize", "제도화·표준화 경로", "현장 적용·확산",
+              (r"제도\s*(?:화|개선)", r"표준\s*(?:화|안|제정)", r"매뉴얼", r"인증", r"(?:법령|지침|고시|기준)\s*(?:개정|반영|마련)",
+               r"조달"),
+              question="개발한 기술이 매뉴얼·표준·법령·조달로 현장에 반영되는 경로는 무엇입니까?"),
+    CheckItem("maintenance", "운영·유지관리 재원", "현장 적용·확산",
+              (r"유지\s*(?:관리|보수)", r"운영\s*(?:비|예산|재원)", r"지속\s*(?:운영|가능)", r"사후\s*관리"),
+              question="사업 종료 후 운영·유지관리는 누가, 어떤 재원으로 맡습니까?"),
+)
+
+
+def checklist_for(project_type: str | None) -> tuple[CheckItem, ...]:
+    """사업 유형별 점검 항목: 산업형은 공통 9개, 공공임무형·혼합형은 재난안전 항목 4개 추가."""
+    return CHECKLIST + (PUBLIC_CHECKLIST if project_type in ("공공임무형", "혼합형") else ())
+
 
 @dataclass
 class Evidence:
@@ -154,14 +179,15 @@ def precheck_brief(results: list[CheckResult], source: str) -> str:
     return "\n".join(lines)
 
 
-def run_precheck(report_text: str | None, source: str | None) -> tuple[str, str]:
-    """(전체 점검표, 지시문용 요약). 원문 모드가 아니면 둘 다 빈 문자열."""
+def run_precheck(report_text: str | None, source: str | None,
+                 project_type: str | None = None) -> tuple[str, str]:
+    """(전체 점검표, 지시문용 요약). 원문 모드가 아니면 둘 다 빈 문자열. 점검 항목은 사업 유형에 따라 다르다."""
     if not report_text or not source:
         return "", ""
     from rdagents.dataflows import budget_check
 
     lines = report_text.splitlines()
-    results = check_lines(lines)
+    results = check_lines(lines, checklist_for(project_type))
     numbers = budget_check.check(lines)  # 표·본문 숫자가 서로 맞는지 (합계·비율·단가×수량·증감률)
     full = render_precheck(results, source) + "\n\n" + budget_check.render_section(numbers, source)
     brief_parts = [precheck_brief(results, source)]
