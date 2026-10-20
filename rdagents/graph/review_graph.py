@@ -9,7 +9,7 @@ from uuid import uuid4
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from rdagents.dataflows.plan_precheck import run_precheck
+from rdagents.dataflows.plan_precheck import precheck_issues, run_precheck
 from rdagents.dataflows.project_type import classify as classify_project_type
 from rdagents.dataflows.project_type import render_section as render_type_section
 from rdagents.default_config import DEFAULT_CONFIG
@@ -161,6 +161,8 @@ class RDReviewGraph:
             precheck_md=precheck_md,
             precheck_brief=precheck_brief,
             project_type=type_result.project_type,
+            precheck_issues=precheck_issues(*get_report_text_and_name(), type_result.project_type),
+            max_debate_issues=int(self.config.get("max_debate_issues") or 6),
             prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
             tool_result_char_budget=int(self.config.get("tool_result_char_budget") or 0),
             max_analyst_tool_calls=int(self.config.get("max_analyst_tool_calls") or 0),

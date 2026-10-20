@@ -12,36 +12,35 @@ from rdagents.agents.schemas import (
 )
 from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
+from rdagents.dataflows.issue_ledger import check_decision_against_ledger, ledger_summary
 
 
-_REPORT_SECTIONS = [
-    ("tech_value_report", "기술 가치"),
-    ("tech_trend_report", "기술 트렌드·중복성"),
-    ("economic_report", "경제·재무 타당성"),
-    ("policy_report", "정책 부합성"),
-    ("feasibility_report", "수행체계"),
-    ("regulatory_report", "규제·윤리"),
-]
+def _check_ledger(decision: FinalDecision, ledger: list[dict]) -> FinalDecision:
+    check_decision_against_ledger(decision.verdict.value, ledger)
+    return decision
 
 
 def create_final_approver(llm):
     def final_approver_node(state):
         system_message = (
             "당신은 국가과학기술자문회의 및 기획재정부의 R&D 예산을 최종 확정하는 **최종 심의위원장**입니다.\n"
-            "6개 전문 분석 보고서, 전문위원회 의견, 예산 조정안과 재정 검토팀의 "
+            "분석가 9명의 쟁점 원장과 공방 결과, 전문위원회 의견, 예산 조정안과 재정 검토팀의 "
             "3자 토론 내역을 직접 대조하여 최종 결정을 내려야 합니다.\n\n"
             "다음을 명심하세요:\n"
             "1. 국가 재정의 건전성과 미래 성장 동력 확보라는 두 가지 가치를 종합적으로 고려하세요.\n"
             "2. '균형 재정 조율관'의 중재안을 가장 비중 있게 검토하되, 최종 판단은 당신의 몫입니다.\n"
             "3. 최종 결정은 승인, 조건부승인, 감액조정, 보류, 반려 중 하나여야 하며, 최종 승인 예산(억원)을 확정해야 합니다.\n"
             "4. 조건부 승인의 경우, 명확한 이행 조건을 부과하세요.\n"
-            "5. 국가 R&D 심의의 최고 책임자로서 위엄 있고 명쾌하게 사유를 설명하세요."
+            "5. 국가 R&D 심의의 최고 책임자로서 위엄 있고 명쾌하게 사유를 설명하세요.\n"
+            "6. 쟁점 원장의 방어 결과는 코드가 원문과 대조해 판정한 것입니다. 3대 기준의 '상' 쟁점이 방어 실패로 남아 "
+            "있으면 '승인'할 수 없습니다 (해당 쟁점 보완을 이행 조건으로 하는 조건부승인 이하).\n"
+            "7. 재정 검토관·위원 중 결론과 다른 의견이 있으면 소수의견(minority_opinions)에 '발언자: 의견'으로 남기세요."
             + get_language_instruction()
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
-            ("human", "다음은 6개 전문 분석 보고서입니다:\n\n{analyst_reports}\n\n"
+            ("human", "## 쟁점 원장 (분석가 9명의 지적과 공방 결과, 코드 판정)\n{ledger}\n\n"
                       "다음은 전문위원회 위원장 의견입니다:\n\n{review_plan}\n\n"
                       "다음은 예산 조정관의 1차 예산안입니다:\n\n{budget_plan}\n\n"
                       "다음은 재정 검토팀의 3자 토론 내역입니다:\n\n{audit_history}\n\n"
@@ -51,17 +50,14 @@ def create_final_approver(llm):
         ])
 
         budget_plan = state.get("budget_coordination_plan", "예산안 없음")
-        reports = [
-            f"--- {title} 분석 ---\n{state[key]}"
-            for key, title in _REPORT_SECTIONS
-            if state.get(key)
-        ]
+        ledger = state.get("issue_ledger") or []
         audit_history = state["audit_debate_state"]["history"]
         if not audit_history:
             audit_history = "토론 내역이 없습니다."
 
         prompt_val = prompt.invoke({
-            "analyst_reports": clip_text("\n\n".join(reports), state) or "전문 분석 보고서 없음",
+            # 분석 보고서 9개를 이어 붙여 문맥 예산으로 줄이면 앞부분만 남는다 -> 쟁점 원장 요약을 대신 읽는다
+            "ledger": ledger_summary(ledger) if ledger else "쟁점 원장 없음",
             "review_plan": state.get("review_plan") or "전문위원회 의견 없음",
             "budget_plan": budget_plan,
             "audit_history": clip_text(audit_history, state),
@@ -79,10 +75,10 @@ def create_final_approver(llm):
             FinalDecision,
             prompt_val,
             "Final Approver",
-            post_validate=lambda decision: align_final_decision_to_budget(
+            post_validate=lambda decision: _check_ledger(align_final_decision_to_budget(
                 decision, approved_budget,
                 budget_known=approved_budget is not None or verified_budget is not None,
-            ),
+            ), ledger),
         )
         decision = call.model
 

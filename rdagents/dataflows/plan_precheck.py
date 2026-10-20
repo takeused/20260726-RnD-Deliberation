@@ -195,3 +195,33 @@ def run_precheck(report_text: str | None, source: str | None,
         brief_parts.append("숫자 검산(코드 계산)에서 서로 맞지 않는 수치가 나왔습니다. 원문을 확인하고 질의하세요:\n"
                            + "\n".join(budget_check.brief_lines(numbers, source)))
     return full, "\n\n".join(p for p in brief_parts if p)
+
+
+def precheck_issues(report_text: str | None, source: str | None, project_type: str | None = None,
+                    number_limit: int = 3) -> list[dict]:
+    """사전 점검의 누락·근거 약함 항목과 숫자 검산 불일치를 쟁점 원장에 넣을 쟁점으로 (코드가 찾은 확정 문제).
+
+    LLM이 분석 보고서에서 뽑는 쟁점과 달리 출처 검증이 필요 없고, 누락 항목은 공방에 반드시 올린다.
+    """
+    if not report_text or not source:
+        return []
+    from rdagents.dataflows import budget_check
+
+    lines = report_text.splitlines()
+    out = []
+    for r in check_lines(lines, checklist_for(project_type)):
+        if r.status == "충족":
+            continue
+        best = _best(r, 1)
+        out.append({"issue": f"{r.item.name} {r.status}. {r.item.question}", "criterion": r.item.criterion,
+                    "severity": "상" if r.status == "누락" else "중", "origin": f"사전 점검 ({r.status})",
+                    "cite": _cite(source, best[0]) if best else "", "quote": "", "verified": True,
+                    "verify_note": "코드 점검"})
+    numbers = budget_check.check(lines)
+    ranked = sorted(numbers.findings, key=lambda f: (f.kind != "원인 칸 추정", f.line))[:number_limit]
+    for f in ranked:
+        out.append({"issue": f"{f.where}의 {f.kind} 불일치: 적힌 값 {f.stated}, 계산 값 {f.computed}",
+                    "criterion": "예산 타당성", "severity": "중", "origin": "숫자 검산",
+                    "cite": f"[출처: {source} L{f.line}-L{f.line}]", "quote": "", "verified": True,
+                    "verify_note": "코드 계산"})
+    return out

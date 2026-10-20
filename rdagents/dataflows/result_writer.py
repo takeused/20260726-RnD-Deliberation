@@ -18,6 +18,7 @@ from rdagents.agents.schemas import (
     render_final_decision,
     render_review_plan,
 )
+from rdagents.dataflows.issue_ledger import render_ledger
 from rdagents.dataflows.output_validation import (
     UNSUPPORTED_SUMMARY_TITLE,
     build_validation_report,
@@ -25,6 +26,7 @@ from rdagents.dataflows.output_validation import (
 )
 
 _ANALYST_FILES = [
+    ("domain_expert_report", "01_분석_분야기술전문가.md"),
     ("tech_value_report", "01a_분석_기술가치.md"),
     ("tech_trend_report", "01b_분석_기술트렌드중복성.md"),
     ("economic_report", "01c_분석_경제재무.md"),
@@ -36,6 +38,7 @@ _ANALYST_FILES = [
 _REPORT_FILES = [
     ("00_입력문서_출처.md", "입력 문서·출처"),
     ("00b_사전점검.md", "기획보고서 사전 점검"),
+    ("01_분석_분야기술전문가.md", "분야 기술전문가 검토"),
     ("01a_분석_기술가치.md", "기술 가치 분석"),
     ("01b_분석_기술트렌드중복성.md", "기술 트렌드·중복성 분석"),
     ("01c_분석_경제재무.md", "경제·재무 분석"),
@@ -43,6 +46,7 @@ _REPORT_FILES = [
     ("01e_분석_수행체계.md", "수행체계 분석"),
     ("01f_분석_규제윤리.md", "규제·윤리 분석"),
     ("02_심사공방_전문.md", "심사 공방 전문"),
+    ("02b_쟁점원장.md", "쟁점 원장"),
     ("03_전문위원회_의견.md", "전문위원회 의견"),
     ("04_예산조정안.md", "예산 조정안"),
     ("05_재정검토토론_전문.md", "재정 검토 토론"),
@@ -170,6 +174,8 @@ def _write_html_report(out_dir: Path, project_id: str, metadata: dict) -> Path:
     source_manifest = documents.get("00_입력문서_출처.md", "")
     validation = documents.get("14_검증보고서.md", "")
     validation_status = _find_label(validation, "검증 상태")
+    ledger_match = re.search(r"- (쟁점 수 \d+: [^\n⚠]+)", documents.get("02b_쟁점원장.md", ""))
+    ledger_line = ledger_match.group(1).strip() if ledger_match else "쟁점 원장 없음"
     # 원문에 없는 수치는 부록 속 검증보고서에 묻히지 않게 의결 바로 아래에 수치별 표로 싣는다
     unsupported = ""
     if UNSUPPORTED_SUMMARY_TITLE in validation:
@@ -187,12 +193,14 @@ def _write_html_report(out_dir: Path, project_id: str, metadata: dict) -> Path:
 
     appendix_items = []
     appendix_files = [
+        ("01_분석_분야기술전문가.md", "분야 기술전문가 검토"),
         ("01a_분석_기술가치.md", "기술가치 분석"),
         ("01b_분석_기술트렌드중복성.md", "기술트렌드·유사중복 분석"),
         ("01c_분석_경제재무.md", "경제·재무 분석"),
         ("01d_분석_정책부합성.md", "정책부합성 분석"),
         ("01e_분석_수행체계.md", "수행체계 분석"),
         ("01f_분석_규제윤리.md", "규제·윤리 분석"),
+        ("02b_쟁점원장.md", "쟁점 원장 (출처 검증·방어 판정)"),
         ("02_심사공방_전문.md", "심사 공방 전문"),
         ("05_재정검토토론_전문.md", "재정 검토 토론"),
         ("09_정량평가표.md", "정량 평가표"),
@@ -231,7 +239,7 @@ details {{ border:1px solid var(--line); margin:10px 0; background:#fcfdfd; }} s
 </style></head><body><a class="skip-link" href="#report-main">본문으로 건너뛰기</a><div class="page">
 <header class="masthead"><p class="kicker">국가연구개발사업 심의결과 보고서</p><h1>{escape(project_name)}</h1><p class="subtitle">신규사업 심의 시뮬레이션 결과 · 의사결정용 요약본</p><div class="meta"><span><strong>심의 기준연도</strong> {review_year}</span><span><strong>수행 모델</strong> {provider} / {deep_model}</span><span><strong>실행 ID</strong> {execution_id}</span></div></header>
 <div class="layout"><nav class="toc" aria-label="보고서 목차"><p>목차</p><a href="#decision">심의 의결</a>{toc_unsupported}<a href="#overview">사업 개요</a><a href="#issues">핵심 쟁점</a><a href="#conditions">이행 조건</a><a href="#questions">질의 대비</a><a href="#appendix">상세 검토자료</a></nav><main class="content" id="report-main">
-<section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div><div class="notice"><strong>생성물 근거 검증</strong><br>{_inline_html(validation_status)} · 상세 내용은 부록의 생성물 근거 검증을 확인하세요.</div></div></div>{unsupported}</section>
+<section class="decision" id="decision"><h2>1. 심의 의결</h2><div class="decision-grid"><div class="verdict"><span>최종 의결</span><strong>{_inline_html(decision)}</strong></div><div><p class="decision-summary">{_inline_html(summary)}</p><div class="notice"><strong>예산 판단</strong><br>{_inline_html(approved_budget)}</div><div class="notice"><strong>쟁점 원장 (코드 판정)</strong><br>{_inline_html(ledger_line)}</div><div class="notice"><strong>생성물 근거 검증</strong><br>{_inline_html(validation_status)} · 상세 내용은 부록의 생성물 근거 검증을 확인하세요.</div></div></div>{unsupported}</section>
 <section id="overview"><h2>2. 사업 개요</h2><dl class="facts"><div class="fact"><dt>사업명</dt><dd>{_inline_html(project_name)}</dd></div><div class="fact"><dt>심의 기준연도</dt><dd>{review_year}년</dd></div><div class="fact"><dt>예산 판단</dt><dd>{_inline_html(approved_budget)}</dd></div><div class="fact"><dt>사업 유형</dt><dd>{_inline_html(project_type)}</dd></div></dl><h3>입력 자료</h3><div class="source">{_markdown_to_html(source_manifest)}</div></section>
 <section id="issues"><h2>3. 핵심 심의 쟁점 및 보완 요구</h2>{_markdown_to_html(documents.get("08_보완권고.md", "내용이 없습니다."))}</section>
 <section id="conditions"><h2>4. 조건부 승인 이행 조건</h2>{_markdown_to_html(final.split("**이행 조건**:", 1)[1].strip() if "**이행 조건**:" in final else final)}</section>
@@ -260,6 +268,8 @@ def save_results(final_state: dict, results_dir: str, project_id: str) -> Path:
         write(filename, final_state.get(key, ""))
 
     write("02_심사공방_전문.md", final_state.get("review_debate_state", {}).get("history", ""))
+    if final_state.get("issue_ledger"):
+        write("02b_쟁점원장.md", render_ledger(final_state["issue_ledger"]))
     write(
         "03_전문위원회_의견.md",
         _render_json_field(final_state.get("review_plan", ""), ReviewPlan, render_review_plan),

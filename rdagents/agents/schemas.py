@@ -52,6 +52,10 @@ class ReviewPlan(BaseModel):
     key_concerns: str = Field(
         description="향후 해결이 필요한 핵심 우려사항 또는 조건.",
     )
+    minority_opinions: list[str] = Field(
+        default_factory=list,
+        description="결론과 다른 위원·분석가 의견(소수의견). '위원: 의견' 형식. 없으면 빈 목록.",
+    )
 
     @field_validator("key_concerns", "rationale", mode="before")
     @classmethod
@@ -66,7 +70,13 @@ def render_review_plan(plan: ReviewPlan) -> str:
         f"**종합 근거**: {plan.rationale}",
         "",
         f"**핵심 우려사항**: {plan.key_concerns}",
+        *render_minority(plan.minority_opinions),
     ])
+
+
+def render_minority(opinions: list[str]) -> list[str]:
+    """소수의견 절. 실제 심의록처럼 결론과 다른 의견도 남긴다 (없으면 절을 만들지 않음)."""
+    return ["", "**소수의견**:", *[f"- {o}" for o in opinions]] if opinions else []
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +204,10 @@ class FinalDecision(BaseModel):
     conditions: str | None = Field(
         default=None,
         description="조건부 승인 시 이행 조건 목록.",
+    )
+    minority_opinions: list[str] = Field(
+        default_factory=list,
+        description="결론과 다른 재정 검토관·위원 의견(소수의견). '발언자: 의견' 형식. 없으면 빈 목록.",
     )
 
     @field_validator("conditions", "executive_summary", "review_rationale", mode="before")
@@ -387,7 +401,44 @@ def render_final_decision(decision: FinalDecision) -> str:
         parts.extend(["", f"**최종 승인 예산**: {decision.approved_budget_billion}억원"])
     if decision.conditions:
         parts.extend(["", f"**이행 조건**: {decision.conditions}"])
+    parts.extend(render_minority(decision.minority_opinions))
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# 쟁점 원장: 분석 보고서의 지적을 쟁점으로 등록하고, 쟁점별 공방의 방어 결과를 기록
+# ---------------------------------------------------------------------------
+
+class RegisteredIssue(BaseModel):
+    """분석 보고서에서 뽑은 쟁점 하나. 출처는 코드가 원문과 대조해 검증한다."""
+
+    issue: str = Field(description="쟁점을 한 문장으로. 무엇이 부족하거나 의심스러운가.")
+    criterion: CriterionTag = Field(description="쟁점이 겨냥하는 심의기준.")
+    severity: Severity = Field(description="심각도 (상/중/하).")
+    source_report: str = Field(description="이 쟁점을 지적한 분석 보고서 이름 (예: '경제/재무 타당성 분석').")
+    cite: str = Field(default="", description="근거 원문 위치 [출처: 파일명 L시작-L끝]. 분석 보고서가 단 출처를 그대로 옮김.")
+    quote: str = Field(default="", description="그 줄에 실제로 있는 원문 구절 (10~40자, 그대로 복사).")
+
+
+class IssueRegister(BaseModel):
+    issues: list[RegisteredIssue] = Field(
+        min_length=3, max_length=12,
+        description="심의에서 다룰 쟁점 5~10개. 심각도 높은 순. 서로 중복되지 않게.",
+    )
+
+
+class DefenseAnswer(BaseModel):
+    """발표자의 쟁점 하나에 대한 답변. 근거가 없으면 supported=false로 솔직히 답한다."""
+
+    supported: bool = Field(description="제출자료(기획보고서 원문)에 방어 근거가 있으면 true, 없으면 false.")
+    answer: str = Field(description="답변. 근거가 없으면 '제출자료로 확인하지 못했습니다'와 보완 계획.")
+    cite: str = Field(default="", description="방어 근거 원문 위치 [출처: 파일명 L시작-L끝]. supported=false면 빈 문자열.")
+    quote: str = Field(default="", description="그 줄에 실제로 있는 원문 구절 (10~40자, 그대로 복사).")
+
+    @field_validator("answer", mode="before")
+    @classmethod
+    def coerce_text_fields(cls, value):
+        return _coerce_str(value)
 
 
 # ---------------------------------------------------------------------------

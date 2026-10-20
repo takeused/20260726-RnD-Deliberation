@@ -369,6 +369,13 @@ def test_rerender_and_compare_runs(tmp_path):
     assert (run / "00b_사전점검.md").read_text(encoding="utf-8").startswith("## 사업 유형 판별")
     assert "- **사업 유형**: 혼합형" in (run / "09_정량평가표.md").read_text(encoding="utf-8")
     assert "<dt>사업 유형</dt><dd>혼합형 (자동 판별)</dd>" in (run / "심의종합리포트.html").read_text(encoding="utf-8")
+    # 쟁점 원장: 파일로 남고 HTML 의결 요약과 실행 비교에 공방 결과가 나온다. 분야 기술전문가 보고서도 저장
+    assert (run / "02b_쟁점원장.md").read_text(encoding="utf-8").startswith("# 쟁점 원장")
+    html = (run / "심의종합리포트.html").read_text(encoding="utf-8")
+    assert re.search(r"쟁점 원장 \(코드 판정\)</strong><br>쟁점 수 \d+: 방어 성공 0 · 방어 실패 \d+ · 공방 미상정", html)
+    assert "⚠️" not in (run / "02b_쟁점원장.md").read_text(encoding="utf-8").split("| #")[0]   # 코드가 쓴 개수엔 표시 없음
+    assert collect(str(run))["쟁점 원장 (공방 결과)"].startswith("방어 성공 0 · 방어 실패")
+    assert (run / "01_분석_분야기술전문가.md").exists()
 
     before = collect(str(run))
     assert before["LLM 호출 수"] > 10                             # 가짜 응답의 예산 100.0억도 원문에 없어 표시됨
@@ -655,11 +662,13 @@ def run_smoke():
     for key in report_keys:
         assert final_state.get(key), f"{key} 비어 있음"
 
-    # 2. 심사 공방: max_debate_rounds=2 → 발언 4회 (패널 2, 발표자 2)
+    # 2. 쟁점별 심사 공방: 가짜 쟁점 3개(정부지원·시급성 '상', 예산)는 모두 반드시 올릴 쟁점 → 발언 6회
     rds = final_state["review_debate_state"]
-    assert rds["count"] == 4, f"심사 공방 count={rds['count']}, 기대 4"
-    assert rds["history"].count("[심사위원 패널]") == 2
-    assert rds["history"].count("[사업 발표자]") == 2
+    ledger = final_state["issue_ledger"]
+    assert [i["status"] for i in ledger] == ["방어 실패"] * 3          # 가짜 발표자는 근거 없음을 인정
+    assert rds["count"] == 6, f"심사 공방 count={rds['count']}, 기대 6"
+    assert rds["history"].count("[심사위원 패널 · ") == 3 and rds["history"].count("[사업 발표자]") == 3
+    assert "재정위원" in rds["history"]                               # 예산 쟁점은 재정위원이 질의
 
     # 3. 재정 검토: max_audit_rounds=1 → 발언 3회 (Agg, Cons, Neut 각 1)
     ads = final_state["audit_debate_state"]
@@ -967,9 +976,11 @@ def test_plan_precheck_rules():
     assert status["background"] == "충족" and status["goal_kpi"] == "충족"
 
 
-def test_panel_prompt_receives_precheck_brief():
-    """패널 지시문에 사전 점검 요약이 들어가고, 원문의 중괄호가 템플릿을 깨지 않는다."""
+def test_panel_asks_one_ledger_issue_and_stops_when_done():
+    """패널은 쟁점 원장에서 쟁점 하나를 골라 담당 위원으로 질의한다. 원문의 중괄호가 템플릿을 깨지 않고,
+    상정할 쟁점이 없으면 LLM을 부르지 않고 공방을 끝낸다."""
     from rdagents.agents.researchers.panel_examiner import create_panel_examiner
+    from rdagents.dataflows.issue_ledger import build_ledger
 
     seen = {}
 
@@ -978,12 +989,76 @@ def test_panel_prompt_receives_precheck_brief():
             seen["text"] = prompt_val.to_string()
             return AIMessage(content="[가짜 질의]")
 
-    node = create_panel_examiner(Capture())
-    node({
-        "precheck_brief": "- [시급성] 시급성의 정량 근거 — 근거 약함 {중괄호 포함 원문}",
-        "review_debate_state": {"examiner_history": "", "defender_history": "", "history": "", "count": 0},
-    })
-    assert "시급성의 정량 근거 — 근거 약함 {중괄호 포함 원문}" in seen["text"]
+    ledger = build_ledger([], [{"issue": "시급성의 정량 근거 근거 약함 {중괄호 포함 원문}", "criterion": "시급성",
+                                "severity": "중", "origin": "사전 점검 (근거 약함)", "cite": "", "quote": "",
+                                "verified": True, "verify_note": "코드 점검"}], "공공임무형")
+    debate = {"examiner_history": "", "defender_history": "", "history": "", "count": 0, "current_response": ""}
+    out = create_panel_examiner(Capture())({"issue_ledger": ledger, "project_type": "공공임무형",
+                                            "review_debate_state": debate})
+    assert "{중괄호 포함 원문}" in seen["text"] and "재난안전 정책위원" in seen["text"]
+    assert out["issue_ledger"][0]["status"] == "공방 중" and out["review_debate_state"]["current_response"] == "Examiner"
+    assert "[심사위원 패널 · 재난안전 정책위원] (쟁점 #1, 시급성" in out["review_debate_state"]["history"]
+    seen.clear()
+    done = create_panel_examiner(Capture())({"issue_ledger": [{**ledger[0], "status": "방어 실패"}],
+                                             "review_debate_state": debate})
+    assert done["review_debate_state"]["current_response"] == "Done" and not seen   # LLM 호출 없음
+
+
+def test_issue_ledger_verifies_citations_orders_debate_and_judges_defense(tmp_path):
+    """쟁점 원장: 출처를 원문과 대조하고, 반드시 올릴 쟁점부터 상정하고, 발표자 답변의 출처·인용·수치로 방어를 판정하고,
+    방어 실패한 3대 기준 '상' 쟁점이 남으면 '승인'을 거부한다."""
+    import pytest
+
+    from rdagents.agents.researchers.project_defender import judge_defense
+    from rdagents.agents.schemas import DefenseAnswer
+    from rdagents.dataflows.issue_ledger import (
+        build_ledger, check_decision_against_ledger, next_issue, render_ledger, verify_citation,
+    )
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원\n최근 5년 풍수해 사망 6명\n수요기관: 시·도 재난안전대책본부\n", encoding="utf-8")
+    set_current_report(str(report), project_id="ledger")
+    assert verify_citation("[출처: 원문.md L2-L2]", "풍수해 사망 6명") == (True, "원문 대조 일치")
+    assert verify_citation("[출처: 원문.md L2-L2]", "피해액 1,200억 원")[1] == "인용 구절이 그 줄에 없음"
+    assert verify_citation("[출처: 원문.md L9-L9]", "")[0] is False                   # 없는 줄
+    assert verify_citation("", "", require_quote=True)[0] is False
+
+    registered = [
+        {"issue": "중요성 근거 약함", "criterion": "기술개발의 중요성", "severity": "하", "source_report": "기술 가치 분석",
+         "cite": "", "quote": ""},
+        {"issue": "시급성 수치 근거", "criterion": "시급성", "severity": "상", "source_report": "정책 부합성 분석",
+         "cite": "[출처: 원문.md L2-L2]", "quote": "사망 6명"},
+        {"issue": "지어낸 출처", "criterion": "정부지원 필요성", "severity": "상", "source_report": "규제/윤리 검토",
+         "cite": "[출처: 원문.md L3-L3]", "quote": "민간 투자 0원"},
+    ]
+    code = [{"issue": "예산 산출 근거 누락", "criterion": "예산 타당성", "severity": "상", "origin": "사전 점검 (누락)",
+             "cite": "", "quote": "", "verified": True, "verify_note": "코드 점검"}]
+    ledger = build_ledger(registered, code, "공공임무형")
+    assert [i["verified"] for i in ledger] == [True, False, True, False]   # 코드 쟁점, 출처 없음, 검증, 지어낸 인용
+    assert ledger[3]["member"] == "법·제도위원" and ledger[0]["member"] == "재정위원"
+    order = []
+    for _ in range(4):
+        item = next_issue(ledger, max_issues=2)
+        if item is None:
+            break
+        order.append(item["id"])
+        item["status"] = "방어 실패"
+    assert order == [1, 3]           # 반드시 올릴 쟁점 2개(예산 누락, 검증된 시급성 '상')로 상한 2를 채움
+
+    # 방어 판정: 근거 없음 인정 / 인용 불일치 / 원문에 없는 수치 -> 실패, 원문과 맞으면 성공
+    ok = DefenseAnswer(supported=True, answer="최근 5년 사망 6명입니다.", cite="[출처: 원문.md L2-L2]", quote="사망 6명")
+    assert judge_defense(ok)[0] == "방어 성공"
+    assert judge_defense(DefenseAnswer(supported=False, answer="제출자료로 확인하지 못했습니다."))[0] == "방어 실패"
+    assert "인용 구절" in judge_defense(ok.model_copy(update={"quote": "사망 60명"}))[1]
+    fabricated = ok.model_copy(update={"answer": "사망 6명, 연간 피해 1,200억 원입니다."})
+    assert judge_defense(fabricated) == ("방어 실패", "원문에 없는 수치로 방어: 1200억")
+
+    with pytest.raises(ValueError, match="#3 시급성"):
+        check_decision_against_ledger("승인", ledger)
+    check_decision_against_ledger("조건부승인", ledger)            # 조건부승인 이하는 통과
+    table = render_ledger(ledger)
+    assert "방어 실패 2 · 공방 미상정 2" in table and "인용 구절이 그 줄에 없음" in table
 
 
 def test_structured_retry_recovers_after_validation_error():

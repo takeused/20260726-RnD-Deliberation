@@ -10,6 +10,8 @@ from langgraph.prebuilt import ToolNode
 from rdagents.agents import (
     create_aggressive_auditor,
     create_budget_coordinator,
+    create_issue_registrar,
+    create_domain_expert_panel,
     create_panel_examiner,
     create_conservative_auditor,
     create_economic_analyst,
@@ -57,7 +59,7 @@ def _clear_messages(state: ReviewAgentState):
     return {"messages": removals + [HumanMessage(content="계속 진행하세요.")]}
 
 
-_REPORT_KEYS = ("tech_value_report", "tech_trend_report", "economic_report",
+_REPORT_KEYS = ("domain_expert_report", "tech_value_report", "tech_trend_report", "economic_report",
                 "policy_report", "feasibility_report", "regulatory_report")
 # 구조화 출력 JSON: 문자열 값에만 표시를 붙인다 (예상 질의 추출기가 최종 결정 JSON을 그대로 읽음)
 _JSON_KEYS = ("review_plan", "budget_coordination_plan", "final_review_decision")
@@ -155,6 +157,7 @@ def setup_graph(
 
     # 분석가 (Analyst) 노드 팩토리 맵
     analyst_factories = {
+        "domain_experts": create_domain_expert_panel(deep_llm),
         "tech_value": create_tech_value_analyst(deep_llm),
         "tech_trend": create_tech_trend_analyst(deep_llm),
         "economic": create_economic_analyst(deep_llm),
@@ -165,6 +168,7 @@ def setup_graph(
 
     # 분석가 ToolNode 맵
     tools_map = {
+        "domain_experts": [get_project_overview, get_tech_details, search_report],
         "tech_value": [get_project_overview, get_tech_details, search_report],
         "tech_trend": [get_similar_projects, get_tech_details, search_report],
         "economic": [get_budget_details, get_project_overview, search_report],
@@ -181,6 +185,7 @@ def setup_graph(
 
     # 심사 공방 노드 등록 (quick_llm 및 deep_llm 조합)
     # 공방은 quick_llm, 종합 및 결정은 deep_llm 사용
+    graph.add_node("Issue Registrar", _timed_node("Issue Registrar", create_issue_registrar(quick_llm), quick_model_name))
     graph.add_node("Panel Examiner", _timed_node("Panel Examiner", create_panel_examiner(quick_llm), quick_model_name))
     graph.add_node("Project Defender", _timed_node("Project Defender", create_project_defender(quick_llm), quick_model_name))
     graph.add_node("Review Manager", _timed_node("Review Manager", create_review_manager(deep_llm), deep_model_name))
@@ -206,7 +211,7 @@ def setup_graph(
     # 분석가 체이닝 (순차 실행)
     for i, spec in enumerate(analyst_plan.specs):
         is_last = (i == len(analyst_plan.specs) - 1)
-        next_node = "Panel Examiner" if is_last else analyst_plan.specs[i + 1].agent_node
+        next_node = "Issue Registrar" if is_last else analyst_plan.specs[i + 1].agent_node
         
         # 조건부 로직 메서드 매핑
         cond_func = getattr(logic, f"should_continue_{spec.key}")
@@ -225,7 +230,8 @@ def setup_graph(
         graph.add_edge(spec.clear_node, next_node)
 
 
-    # 심사 공방 루프 (패널 질의 -> 발표자 방어)
+    # 쟁점 등록 -> 쟁점별 심사 공방 루프 (패널 질의 -> 발표자 방어, 쟁점이 끝나면 위원장)
+    graph.add_edge("Issue Registrar", "Panel Examiner")
     graph.add_conditional_edges(
         "Panel Examiner",
         logic.should_continue_review_debate,

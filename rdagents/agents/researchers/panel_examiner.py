@@ -1,84 +1,71 @@
-# 🔎 심사위원 패널 (Panel Examiner) — 실제 심의위원처럼 보고서의 허점을 공격하는 질의·지적 생성
+# 🔎 심사위원 패널 (Panel Examiner) — 쟁점 원장에서 쟁점을 하나씩 골라 담당 위원이 질의
 """실제 심의장에는 사업을 옹호해 주는 위원이 없다. 위원 전원이 각자 전문 분야에서
-공격하고, 옹호는 발표자(사업 담당자)의 몫이다. 이 노드는 그 위원 패널을 재현한다."""
+공격하고, 옹호는 발표자(사업 담당자)의 몫이다. 이 노드는 그 위원 패널을 재현한다.
+
+쟁점 선택(반드시 올릴 쟁점 -> 출처 검증된 쟁점 -> 심각도 순)과 질의 위원 배정은 코드가 하고,
+LLM은 배정된 위원으로서 그 쟁점의 질의 문장만 쓴다. 이전에는 라운드마다 질의 3~5개를 자유 서술했고,
+보고서 9개를 이어 붙여 한꺼번에 줄였기 때문에 패널이 실제로 읽은 분석은 앞부분 일부뿐이었다.
+쟁점이 남지 않았거나 상한에 닿으면 LLM을 부르지 않고 공방을 끝낸다 (current_response="Done").
+"""
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, make_ai_message
+from rdagents.agents.utils.committee import panel_roster
 from rdagents.agents.utils.review_criteria import get_review_criteria
+from rdagents.dataflows.issue_ledger import DEBATING, cited_lines, next_issue
 
-_REPORT_SECTIONS = [
-    ("tech_value_report", "기술 가치 분석"),
-    ("tech_trend_report", "기술 트렌드/중복성 분석"),
-    ("economic_report", "경제/재무 타당성 분석"),
-    ("policy_report", "정책 부합성 분석"),
-    ("feasibility_report", "수행체계 분석"),
-    ("regulatory_report", "규제/윤리 검토"),
-]
+DEFAULT_MAX_DEBATE_ISSUES = 6
 
 
 def create_panel_examiner(llm):
     def panel_examiner_node(state):
-        system_message = (
-            "당신은 R&D 예산 심의의 **심사위원 패널**입니다. 기술·경제·정책·수행체계 분야의 "
-            "위원들이 각자의 전문성으로 사업 발표자를 심문합니다.\n\n"
-            "다음을 명심하세요:\n"
-            "1. 이번 발언에서 서로 다른 각도의 날카로운 질의·지적을 3~5개 제시하세요. "
-            "각 질의는 실제 심의위원이 마이크를 잡고 던질 법한 형태의 완결된 질문이어야 합니다.\n"
-            "2. 최우선 심의기준(정부지원 필요성, 기술개발의 중요성, 시급성)을 겨냥한 공격을 "
-            "반드시 포함하되, 이전 라운드에서 이미 던진 질의를 반복하지 마세요.\n"
-            "3. 발표자의 이전 방어에 허점·회피·근거 부족이 있으면 그 지점을 재차 파고드세요.\n"
-            "4. 예산 규모와 비목·단가의 산출 근거를 묻는 질의를 공방 전체에서 최소 1회 포함하세요. "
-            "이전 라운드에서 이미 물었다면 반복하지 말고, 방어가 부실했던 경우에만 재차 파고드세요.\n"
-            "5. 예의는 갖추되 봐주지 마세요. 국가 예산이 걸린 심의입니다.\n"
-            + get_review_criteria(state.get("project_type"))
+        debate = state["review_debate_state"]
+        ledger = [dict(item) for item in state.get("issue_ledger") or []]
+        item = next_issue(ledger, int(state.get("max_debate_issues") or DEFAULT_MAX_DEBATE_ISSUES))
+        if item is None:
+            return {"review_debate_state": {**debate, "current_response": "Done"}}
+
+        project_type = state.get("project_type")
+        # 앞선 질의는 반복을 피하는 용도라 앞부분만 (질의를 길게 쓰면 쟁점마다 요청이 커짐)
+        asked = [i["question"][:120] for i in ledger if i["question"]]
+        system = (
+            f"당신은 R&D 예산 심의 심사위원 패널({panel_roster(project_type)}) 중 **{item['member']}**입니다. "
+            "주어진 쟁점 하나로 사업 발표자에게 날카로운 질의를 1~2문장으로 하세요. 실제 심의위원이 마이크를 잡고 "
+            "던질 법한 완결된 질문이어야 하고, 앞선 질의를 반복하지 마세요. 근거 원문에 없는 수치를 새로 만들지 마세요. "
+            "질의만 한국어로 쓰세요."
+            + get_review_criteria(project_type)
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
-            + get_language_instruction()
         )
-
         prompt = ChatPromptTemplate.from_messages([
-            ("system", system_message),
-            ("human", "## 기획보고서 사전 점검 (규칙 기반)\n{precheck}\n\n"
-                      "다음은 전문가들의 사전 분석 보고서입니다:\n\n{reports}\n\n"
-                      "발표자(사업 담당자)의 이전 방어 발언:\n{defender_history}\n\n"
-                      "패널이 이전에 던진 질의·지적:\n{examiner_history}\n\n"
-                      "위 내용을 바탕으로 이번 라운드의 심사 질의·지적을 제시하세요."),
+            ("system", system),
+            ("human", "## 쟁점 #{id} ({criterion}, 심각도 {severity}, 출처: {origin})\n{issue}\n\n"
+                      "## 근거 원문\n{evidence}\n\n## 앞선 질의\n{asked}"),
         ])
+        response = llm.invoke(prompt.invoke({
+            "id": item["id"], "criterion": item["criterion"], "severity": item["severity"],
+            "origin": item["origin"], "issue": item["issue"],
+            # PDF에서 바꾼 원문은 한 줄이 문단 전체일 수 있어 길이를 제한한다 (NDMI 추정: 패널 요청 10,137토큰, 413)
+            "evidence": clip_text(cited_lines(item["cite"]), state)
+                or "원문 근거 줄 없음 (보고서에 해당 내용이 없다는 지적일 수 있음)",
+            "asked": "\n".join(f"- {q}" for q in asked) or "없음 (첫 질의)",
+        }))
+        question = response.content.strip()
+        item.update(status=DEBATING, question=question)
+        ledger = [item if i["id"] == item["id"] else i for i in ledger]
 
-        reports = []
-        for key, name in _REPORT_SECTIONS:
-            if state.get(key):
-                reports.append(f"--- {name} ---\n{state[key]}")
-
-        prompt_val = prompt.invoke({
-            # 규칙 점검에서 누락·근거 약함으로 나온 항목 = 우선 공격 지점 (템플릿 변수로 넘겨 원문의 중괄호에 안전)
-            "precheck": state.get("precheck_brief")
-                or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
-            "reports": clip_text("\n\n".join(reports), state) or "분석 보고서 없음",
-            "defender_history": clip_text(state["review_debate_state"]["defender_history"], state)
-                or "아직 발표자 발언이 없습니다. 보고서 자체의 허점을 공격하세요.",
-            "examiner_history": clip_text(state["review_debate_state"]["examiner_history"], state)
-                or "첫 라운드입니다.",
-        })
-
-        response = llm.invoke(prompt_val)
-        new_content = response.content
-
-        new_history = state["review_debate_state"]["history"] + f"\n[심사위원 패널]: {new_content}\n"
-        new_examiner_history = (
-            state["review_debate_state"]["examiner_history"] + f"\n[심사위원 패널]: {new_content}\n"
-        )
-
+        line = (f"\n[심사위원 패널 · {item['member']}] (쟁점 #{item['id']}, {item['criterion']}, "
+                f"심각도 {item['severity']}): {question}\n")
         return {
-            "messages": [make_ai_message(new_content, "PanelExaminer",
-                                         getattr(response, "usage_metadata", None))],
+            "messages": [make_ai_message(question, "PanelExaminer", getattr(response, "usage_metadata", None))],
+            "issue_ledger": ledger,
             "review_debate_state": {
-                **state["review_debate_state"],
-                "examiner_history": new_examiner_history,
-                "history": new_history,
+                **debate,
+                "examiner_history": debate["examiner_history"] + line,
+                "history": debate["history"] + line,
                 "current_response": "Examiner",
-                "count": state["review_debate_state"]["count"] + 1,
-            }
+                "count": debate["count"] + 1,
+            },
         }
 
     return panel_examiner_node
