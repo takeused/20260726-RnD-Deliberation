@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 UNIT_NUMBER = re.compile(
@@ -102,6 +103,7 @@ class Evidence:
     has_number: bool
     undecided: bool
     heading: bool
+    source: str = ""   # 근거 파일(--evidence)을 함께 점검할 때 이 줄이 있는 파일
 
 
 @dataclass
@@ -111,7 +113,17 @@ class CheckResult:
     evidence: list[Evidence] = field(default_factory=list)
 
 
-def check_lines(lines: list[str], checklist: tuple[CheckItem, ...] = CHECKLIST) -> list[CheckResult]:
+def _status(item: CheckItem, evidence: list[Evidence]) -> str:
+    if not evidence:
+        return "누락"
+    if item.needs_number and not any(e.has_number for e in evidence):
+        return "근거 약함"
+    if all(e.undecided or e.heading for e in evidence) and any(e.undecided for e in evidence):
+        return "근거 약함"
+    return "충족"
+
+
+def check_lines(lines: list[str], checklist: tuple[CheckItem, ...] = CHECKLIST, source: str = "") -> list[CheckResult]:
     pages, current = [], None
     for line in lines:
         if m := PAGE_MARK.search(line):
@@ -122,38 +134,46 @@ def check_lines(lines: list[str], checklist: tuple[CheckItem, ...] = CHECKLIST) 
         regex = re.compile("|".join(item.patterns))
         evidence = [
             Evidence(i, pages[i - 1], line.strip(), bool(UNIT_NUMBER.search(line)),
-                     bool(UNDECIDED.search(line)), line.lstrip().startswith("#"))
+                     bool(UNDECIDED.search(line)), line.lstrip().startswith("#"), source)
             for i, line in enumerate(lines, 1)
             if regex.search(line) and not re.search(r"[·.…]{6,}", line) and not PAGE_MARK.fullmatch(line.strip())
         ]
-        if not evidence:
-            status = "누락"
-        elif item.needs_number and not any(e.has_number for e in evidence):
-            status = "근거 약함"
-        elif all(e.undecided or e.heading for e in evidence) and any(e.undecided for e in evidence):
-            status = "근거 약함"
-        else:
-            status = "충족"
-        results.append(CheckResult(item, status, evidence))
+        results.append(CheckResult(item, _status(item, evidence), evidence))
+    return results
+
+
+def check_sources(sources: Mapping[str, list[str]], checklist: tuple[CheckItem, ...] = CHECKLIST) -> list[CheckResult]:
+    """주 보고서와 근거 파일(--evidence)을 함께 점검한다. 항목마다 모든 파일의 근거 줄을 합쳐 판정.
+
+    주 보고서만 보면 내용이 여러 파일로 나뉜 입력(요약 보고서 + 유사·중복 검토 파일 등)에서 근거 파일에만 있는
+    항목이 '누락'으로 나왔다 (로컬 비공개 보고서 1건: 누락 4건 중 일부). 사전 점검 누락은 쟁점 원장에서 공방에
+    반드시 올리는 쟁점이라, 오탐이면 공방 자리를 차지한다.
+    """
+    per_source = [check_lines(lines, checklist, name) for name, lines in sources.items()]
+    results = []
+    for i, item in enumerate(checklist):
+        evidence = [e for results_of_source in per_source for e in results_of_source[i].evidence]
+        results.append(CheckResult(item, _status(item, evidence), evidence))
     return results
 
 
 def _cite(source: str, e: Evidence) -> str:
     page = f" (p.{e.page})" if e.page else ""
-    return f"[출처: {source} L{e.line}-L{e.line}]{page}"
+    return f"[출처: {e.source or source} L{e.line}-L{e.line}]{page}"
 
 
 def _best(r: CheckResult, n: int = 2) -> list[Evidence]:
     return sorted(r.evidence, key=lambda e: (not e.heading, not e.has_number, e.line))[:n]
 
 
-def render_precheck(results: list[CheckResult], source: str) -> str:
+def render_precheck(results: list[CheckResult], source: str, evidence_names: tuple[str, ...] = ()) -> str:
     """전체 점검표 (산출물 00b_사전점검.md)."""
     mark = {"충족": "충족", "근거 약함": "근거 약함", "누락": "누락"}
     counts = {s: sum(r.status == s for r in results) for s in mark}
     out = [
         "# 기획보고서 사전 점검 (규칙 기반)", "",
-        f"- 대상: `{source}`",
+        f"- 대상: `{source}`" + (f" + 근거 파일 {len(evidence_names)}개 (" + ", ".join(f"`{n}`" for n in evidence_names)
+                                 + ")" if evidence_names else ""),
         f"- 결과: 충족 {counts['충족']} · 근거 약함 {counts['근거 약함']} · 누락 {counts['누락']} (항목 {len(results)}개)", "",
         "| 항목 | 심의기준 | 결과 | 해당 줄 수 | 대표 근거 |", "|---|---|---|---|---|",
     ]
@@ -179,17 +199,27 @@ def precheck_brief(results: list[CheckResult], source: str) -> str:
     return "\n".join(lines)
 
 
-def run_precheck(report_text: str | None, source: str | None,
-                 project_type: str | None = None) -> tuple[str, str]:
-    """(전체 점검표, 지시문용 요약). 원문 모드가 아니면 둘 다 빈 문자열. 점검 항목은 사업 유형에 따라 다르다."""
+def _sources(report_text: str, source: str, evidence: Mapping[str, str] | None) -> dict[str, list[str]]:
+    return {source: report_text.splitlines(), **{name: text.splitlines() for name, text in (evidence or {}).items()
+                                                 if name != source}}
+
+
+def run_precheck(report_text: str | None, source: str | None, project_type: str | None = None,
+                 evidence: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """(전체 점검표, 지시문용 요약). 원문 모드가 아니면 둘 다 빈 문자열. 점검 항목은 사업 유형에 따라 다르다.
+
+    evidence: 근거 파일 {파일명: 본문}. 항목 점검은 주 보고서와 함께 보고, 숫자 검산은 주 보고서만 본다.
+    """
     if not report_text or not source:
         return "", ""
     from rdagents.dataflows import budget_check
 
     lines = report_text.splitlines()
-    results = check_lines(lines, checklist_for(project_type))
+    sources = _sources(report_text, source, evidence)
+    results = check_sources(sources, checklist_for(project_type))
     numbers = budget_check.check(lines)  # 표·본문 숫자가 서로 맞는지 (합계·비율·단가×수량·증감률)
-    full = render_precheck(results, source) + "\n\n" + budget_check.render_section(numbers, source)
+    full = (render_precheck(results, source, tuple(sources)[1:]) + "\n\n"
+            + budget_check.render_section(numbers, source))
     brief_parts = [precheck_brief(results, source)]
     if numbers.findings:
         brief_parts.append("숫자 검산(코드 계산)에서 서로 맞지 않는 수치가 나왔습니다. 원문을 확인하고 질의하세요:\n"
@@ -198,7 +228,7 @@ def run_precheck(report_text: str | None, source: str | None,
 
 
 def precheck_issues(report_text: str | None, source: str | None, project_type: str | None = None,
-                    number_limit: int = 3) -> list[dict]:
+                    number_limit: int = 3, evidence: Mapping[str, str] | None = None) -> list[dict]:
     """사전 점검의 누락·근거 약함 항목과 숫자 검산 불일치를 쟁점 원장에 넣을 쟁점으로 (코드가 찾은 확정 문제).
 
     LLM이 분석 보고서에서 뽑는 쟁점과 달리 출처 검증이 필요 없고, 누락 항목은 공방에 반드시 올린다.
@@ -209,7 +239,7 @@ def precheck_issues(report_text: str | None, source: str | None, project_type: s
 
     lines = report_text.splitlines()
     out = []
-    for r in check_lines(lines, checklist_for(project_type)):
+    for r in check_sources(_sources(report_text, source, evidence), checklist_for(project_type)):
         if r.status == "충족":
             continue
         best = _best(r, 1)

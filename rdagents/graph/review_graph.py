@@ -140,8 +140,10 @@ class RDReviewGraph:
         type_result = classify_project_type(
             get_source_lines() or self._sample_lines(project_id), self.config.get("project_type")
         )
-        # 원문 모드면 심의 전에 규칙 기반 사전 점검 (LLM 호출 없음)
-        precheck_md, precheck_brief = run_precheck(*get_report_text_and_name(), type_result.project_type)
+        # 원문 모드면 심의 전에 규칙 기반 사전 점검 (LLM 호출 없음). 근거 파일(--evidence)도 함께 본다
+        report_text, report_name = get_report_text_and_name()
+        evidence = {name: "\n".join(lines) for name, lines in get_source_lines().items() if name != report_name}
+        precheck_md, precheck_brief = run_precheck(report_text, report_name, type_result.project_type, evidence)
         # 판별 결과를 사전 점검 문서 맨 앞에 둔다 ('## 숫자 검산' 절 뒤에 두면 수치 표시의 계산값 근거에 섞임)
         precheck_md = render_type_section(type_result) + ("\n\n" + precheck_md if precheck_md else "")
 
@@ -161,7 +163,7 @@ class RDReviewGraph:
             precheck_md=precheck_md,
             precheck_brief=precheck_brief,
             project_type=type_result.project_type,
-            precheck_issues=precheck_issues(*get_report_text_and_name(), type_result.project_type),
+            precheck_issues=precheck_issues(report_text, report_name, type_result.project_type, evidence=evidence),
             max_debate_issues=int(self.config.get("max_debate_issues") or 6),
             prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
             tool_result_char_budget=int(self.config.get("tool_result_char_budget") or 0),

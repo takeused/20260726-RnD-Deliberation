@@ -975,6 +975,16 @@ def test_plan_precheck_rules():
     status = {r.item.key: r.status for r in check_lines(other)}
     assert status["background"] == "충족" and status["goal_kpi"] == "충족"
 
+    # 근거 파일(--evidence)도 함께 본다: 주 보고서에 없고 근거 파일에만 있는 항목은 누락이 아니고, 근거 줄은 그 파일로 인용
+    from rdagents.dataflows.plan_precheck import precheck_issues
+    main_text = "## 사업 개요\n- 총 사업비 120억 원\n"
+    evidence = {"04_중복검토.md": "## 유사·중복 검토\n- 기존 사업과 차별화된다\n"}
+    alone = {r["issue"].split(" ")[0] for r in precheck_issues(main_text, "a.md")}
+    joined = precheck_issues(main_text, "a.md", evidence=evidence)
+    assert "기술" in alone and not any(i["issue"].startswith("기술 차별성") for i in joined)
+    full, _ = run_precheck(main_text, "a.md", evidence=evidence)
+    assert "+ 근거 파일 1개 (`04_중복검토.md`)" in full and "[출처: 04_중복검토.md L1-L1]" in full
+
 
 def test_panel_asks_one_ledger_issue_and_stops_when_done():
     """패널은 쟁점 원장에서 쟁점 하나를 골라 담당 위원으로 질의한다. 원문의 중괄호가 템플릿을 깨지 않고,
