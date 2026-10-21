@@ -9,7 +9,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from rdagents.agents.schemas import IssueRegister
 from rdagents.agents.utils.agent_utils import clip_text, make_ai_message
 from rdagents.agents.utils.structured import invoke_structured_model
-from rdagents.dataflows.issue_ledger import build_ledger, render_ledger
+from rdagents.dataflows.issue_ledger import build_ledger, cited_claims, render_ledger, resolve_refs
 
 REPORT_SECTIONS = [
     ("domain_expert_report", "분야 기술전문가 검토"),
@@ -31,22 +31,27 @@ def create_issue_registrar(llm):
             "당신은 R&D 예산 심의의 간사입니다. 아래 분석 보고서들에서 심의 공방에서 다룰 쟁점을 5~10개 뽑아 원장에 등록하세요.\n"
             f"- 사업 유형: {project_type}. 심의기준은 {criteria} 중 하나로 분류하세요.\n"
             "- 쟁점은 '무엇이 부족하거나 의심스러운가'를 한 문장으로. 보고서의 칭찬·요약은 쟁점이 아닙니다.\n"
-            "- cite에는 분석 보고서가 그 지적에 단 [출처: 파일명 L시작-L끝]을 그대로 옮기고, quote에는 그 줄에 실제로 있는 "
-            "원문 구절을 그대로 복사하세요. 출처가 없는 지적은 cite와 quote를 비워 두세요 (지어내면 코드 검증에서 걸립니다).\n"
+            "- 보고서의 지적 앞에 붙은 번호(예: R3)가 원문 출처입니다. 그 지적에서 뽑은 쟁점이면 cite에 번호만 적으세요 "
+            "(코드가 원문 출처로 바꾸고 대조합니다). 번호가 없는 지적이면 cite를 비워 두고, quote는 항상 비워 두세요.\n"
             "- 보고서에 없는 수치·사실을 쟁점에 새로 쓰지 마세요."
         )
         prompt = ChatPromptTemplate.from_messages([
             ("system", system),
             ("human", "## 분석 보고서\n\n{reports}\n\n심각도 높은 순으로 쟁점을 등록하세요."),
         ])
-        # 보고서마다 따로 줄인다 (한꺼번에 줄이면 앞 보고서만 남음). 줄일 때 끝의 요약 표가 남도록 앞뒤를 보존
-        reports = "\n\n".join(
-            f"--- {name} ---\n{clip_text(state[key], state, fraction=0.6)}"
-            for key, name in REPORT_SECTIONS if state.get(key)
-        )
-        prompt_val = prompt.invoke({"reports": reports or "분석 보고서 없음"})
+        # 보고서마다 출처 달린 지적에만 번호를 붙여 보여 주고, 따로 줄인다 (한꺼번에 줄이면 앞 보고서만 남음).
+        # 출처 달린 지적이 없는 보고서는 본문을 줄여서 보여 준다
+        claims, sections = [], []
+        for key, name in REPORT_SECTIONS:
+            if not state.get(key):
+                continue
+            found = cited_claims(state[key], start=len(claims) + 1)
+            claims += found
+            body = "\n".join(f"- [{c['ref']}] {c['claim']}" for c in found) or state[key]
+            sections.append(f"--- {name} ---\n{clip_text(body, state, fraction=0.6)}")
+        prompt_val = prompt.invoke({"reports": "\n\n".join(sections) or "분석 보고서 없음"})
         call = invoke_structured_model(llm, IssueRegister, prompt_val, "Issue Registrar")
-        registered = [i.model_dump(mode="json") for i in call.model.issues] if call.model else []
+        registered = resolve_refs([i.model_dump(mode="json") for i in call.model.issues], claims) if call.model else []
         ledger = build_ledger(registered, state.get("precheck_issues") or [], project_type)
         return {
             "messages": [make_ai_message(render_ledger(ledger), "IssueRegistrar", call.usage)],

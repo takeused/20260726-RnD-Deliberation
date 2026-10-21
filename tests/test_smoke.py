@@ -1034,6 +1034,13 @@ def test_issue_ledger_verifies_citations_orders_debate_and_judges_defense(tmp_pa
     assert verify_citation("[출처: 원문.md L9-L9]", "")[0] is False                   # 없는 줄
     assert verify_citation("", "", require_quote=True)[0] is False
 
+    # 등록기에는 긴 출처 대신 번호(R1…)를 보여 주고, 등록기가 적은 번호를 코드가 출처로 되돌린다
+    from rdagents.dataflows.issue_ledger import cited_claims, resolve_refs
+    claims = cited_claims("## 요약\n- 사망 통계 근거가 약함 [출처: 원문.md L2-L2]\n출처 없는 의견\n", start=4)
+    assert claims == [{"ref": "R4", "claim": "사망 통계 근거가 약함", "cite": "[출처: 원문.md L2-L2]"}]
+    assert [r["cite"] for r in resolve_refs([{"cite": "R4"}, {"cite": "R9"}, {"cite": ""}], claims)] == [
+        "[출처: 원문.md L2-L2]", "R9", ""]
+
     registered = [
         {"issue": "중요성 근거 약함", "criterion": "기술개발의 중요성", "severity": "하", "source_report": "기술 가치 분석",
          "cite": "", "quote": ""},

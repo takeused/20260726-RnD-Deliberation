@@ -56,6 +56,39 @@ def verify_citation(cite: str, quote: str, require_quote: bool = False) -> tuple
     return True, "원문 대조 일치"
 
 
+_CITE_RE = re.compile(r"\[출처:[^\]\n]*\]")
+_BULLET_RE = re.compile(r"^\s*(?:[-*•|]|\d+[.)])\s*")
+_REF_RE = re.compile(r"\bR(\d+)\b")
+
+
+def cited_claims(text: str, start: int = 1, width: int = 100) -> list[dict]:
+    """분석 보고서에서 출처가 달린 지적(줄)을 뽑아 짧은 번호(R1, R2…)를 붙인다.
+
+    출처 하나가 파일 이름 때문에 100자를 넘어서, 보고서를 글자 수로 줄이면 출처 달린 지적이 거의 남지 않았다
+    (NDMI groq8: 등록 쟁점 7개 모두 출처 없음 -> 공방 미상정). 등록기에는 번호만 보여 주고 코드가 출처로 되돌린다.
+    """
+    claims = []
+    for line in (text or "").splitlines():
+        cites = _CITE_RE.findall(line)
+        claim = _BULLET_RE.sub("", _CITE_RE.sub("", line)).strip(" *|")
+        if cites and claim:
+            claims.append({"ref": f"R{start + len(claims)}", "claim": claim[:width], "cite": cites[0]})
+    return claims
+
+
+def resolve_refs(registered: list[dict], claims: list[dict]) -> list[dict]:
+    """등록기가 cite에 적은 번호(R3)를 원래 출처로 바꾼다. 출처를 직접 적었거나 없는 번호면 그대로 둔다."""
+    by_ref = {c["ref"]: c["cite"] for c in claims}
+    resolved = []
+    for raw in registered:
+        cite = raw.get("cite") or ""
+        match = _REF_RE.search(cite)
+        if match and "출처:" not in cite and f"R{match.group(1)}" in by_ref:
+            raw = {**raw, "cite": by_ref[f"R{match.group(1)}"]}
+        resolved.append(raw)
+    return resolved
+
+
 def cited_lines(cite: str, around: int = 1, max_lines: int = 8) -> str:
     """출처가 가리키는 원문 줄(앞뒤 around줄 포함)을 'L번호: 내용'으로. 공방 노드가 긴 보고서 대신 읽는 근거."""
     from rdagents.dataflows.output_validation import _CITATION_RE, _RANGE_RE, normalize_citation_text, resolve_source

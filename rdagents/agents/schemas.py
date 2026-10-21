@@ -416,8 +416,8 @@ class RegisteredIssue(BaseModel):
     criterion: CriterionTag = Field(description="쟁점이 겨냥하는 심의기준.")
     severity: Severity = Field(description="심각도 (상/중/하).")
     source_report: str = Field(description="이 쟁점을 지적한 분석 보고서 이름 (예: '경제/재무 타당성 분석').")
-    cite: str = Field(default="", description="근거 원문 위치 [출처: 파일명 L시작-L끝]. 분석 보고서가 단 출처를 그대로 옮김.")
-    quote: str = Field(default="", description="그 줄에 실제로 있는 원문 구절 (10~40자, 그대로 복사).")
+    cite: str = Field(default="", description="근거가 된 지적의 번호 (예: R3). 번호가 없는 지적이면 비움.")
+    quote: str = Field(default="", description="비워 둠 (출처는 코드가 원문과 대조).")
 
 
 class IssueRegister(BaseModel):
