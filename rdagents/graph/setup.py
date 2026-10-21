@@ -29,6 +29,7 @@ from rdagents.agents import (
     create_tech_value_analyst,
 )
 from rdagents.agents.utils.agent_states import ReviewAgentState
+from rdagents.dataflows.issue_ledger import render_ledger
 from rdagents.dataflows.output_validation import mark_texts
 from rdagents.dataflows.project_loader import (
     get_budget_details,
@@ -72,7 +73,7 @@ _DEBATE_TEXT_KEYS = {
 }
 
 
-def _mark_json(raw: str, precheck_md: str) -> str:
+def _mark_json(raw: str, precheck_md: str, ledger_md: str = "") -> str:
     """JSON 문자열의 글 값에 표시를 붙인다. JSON이 아니면 그대로."""
     try:
         data = json.loads(raw)
@@ -83,7 +84,7 @@ def _mark_json(raw: str, precheck_md: str) -> str:
     texts = {key: value for key, value in data.items() if isinstance(value, str) and value}
     if not texts:
         return raw
-    marked = mark_texts(texts, precheck_md)
+    marked = mark_texts(texts, precheck_md, ledger_md)
     if marked == texts:
         return raw
     return json.dumps({**data, **marked}, ensure_ascii=False)
@@ -92,7 +93,9 @@ def _mark_json(raw: str, precheck_md: str) -> str:
 def _mark_numbers(result: dict, state) -> dict:
     """노드가 쓴 글에 원문에 없는 수치 표시를 바로 붙인다 (뒤 노드가 지어낸 수치를 사실로 읽고 이어 쓰지 않게)."""
     precheck_md = state.get("precheck_md", "")
-    result = {**result, **{key: _mark_json(result[key], precheck_md)
+    ledger = result.get("issue_ledger") or state.get("issue_ledger")
+    ledger_md = render_ledger(ledger) if ledger else ""  # 원장의 쟁점 개수는 코드가 센 값이라 표시하지 않음
+    result = {**result, **{key: _mark_json(result[key], precheck_md, ledger_md)
                            for key in _JSON_KEYS if isinstance(result.get(key), str)}}
     texts = {key: result[key] for key in _REPORT_KEYS if isinstance(result.get(key), str) and result[key]}
     for state_key, fields in _DEBATE_TEXT_KEYS.items():
@@ -101,7 +104,7 @@ def _mark_numbers(result: dict, state) -> dict:
             texts |= {f"{state_key}.{f}": debate[f] for f in fields if isinstance(debate.get(f), str) and debate[f]}
     if not texts:
         return result
-    marked = mark_texts(texts, precheck_md)
+    marked = mark_texts(texts, precheck_md, ledger_md)
     out = {**result, **{key: marked[key] for key in _REPORT_KEYS if key in marked}}
     for state_key in _DEBATE_TEXT_KEYS:
         if isinstance(result.get(state_key), dict):

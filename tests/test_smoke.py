@@ -1076,6 +1076,10 @@ def test_issue_ledger_verifies_citations_orders_debate_and_judges_defense(tmp_pa
     check_decision_against_ledger("조건부승인", ledger)            # 조건부승인 이하는 통과
     table = render_ledger(ledger)
     assert "방어 실패 2 · 공방 미상정 2" in table and "인용 구절이 그 줄에 없음" in table
+    # 원장의 쟁점 개수를 옮겨 적은 수치는 표시하지 않지만, 원장에 없는 개수는 표시한다
+    from rdagents.dataflows.output_validation import mark_texts
+    marked = mark_texts({"d": "방어 실패 2건, 미상정 쟁점 2개\n방어 실패 7건"}, ledger_md=table)["d"]
+    assert marked.splitlines()[0] == "방어 실패 2건, 미상정 쟁점 2개" and "⚠️[원문에 없는 수치: 7건]" in marked
 
 
 def test_structured_retry_recovers_after_validation_error():
