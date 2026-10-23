@@ -15,7 +15,8 @@ except ImportError:  # 선택 의존성: 없으면 기본 인증서 묶음 사�
     pass
 
 from rdagents.default_config import _ENV_OVERRIDES
-from rdagents.graph.review_graph import RDReviewGraph
+from rdagents.graph.review_graph import HUMAN_REVIEW_PENDING, RDReviewGraph
+from rdagents.dataflows.issue_ledger import needs_human_review  # noqa: E402 (rdagents.agents를 먼저 불러야 순환 import가 없음)
 from rdagents.llm_clients.api_key_env import get_api_key_env
 from rdagents.llm_clients.quota import DailyQuotaExceeded, RequestTooLarge
 
@@ -74,6 +75,30 @@ def _validate_provider_auth(provider: str) -> str | None:
     return None
 
 
+def _human_reviewer(answers_path: str | None):
+    """사람 검토 노드가 멈췄을 때 판단을 받는 함수: 답 파일이 있으면 그걸 쓰고, 터미널이면 묻고, 둘 다 아니면 None(멈춤)."""
+    if answers_path:
+        with open(answers_path, encoding="utf-8") as f:
+            answers = json.load(f)
+        return lambda payload: answers
+    if not sys.stdin.isatty():
+        return None
+
+    def ask(payload: dict) -> dict:
+        print("\n" + "=" * 60 + "\n사람 검토: 공방 전에 판단이 필요한 쟁점\n" + payload["guide"] + "\n" + "=" * 60)
+        decisions = {}
+        for item in payload["issues"]:
+            print(f"\n#{item['id']} [{item['criterion']}·{item['severity']}] {item['issue']}")
+            print(f"   출처: {item['origin']} ({item['verify_note']})")
+            choice = input("   상정(s) / 제외(x) / 코드 규칙대로(Enter): ").strip().lower()
+            decision = {"s": "상정", "상정": "상정", "x": "제외", "제외": "제외"}.get(choice)
+            if decision:
+                decisions[str(item["id"])] = {"decision": decision, "note": input("   메모(선택): ").strip()}
+        return decisions
+
+    return ask
+
+
 def main():
     parser = argparse.ArgumentParser(description="R&D 신규사업 예산 심의 시뮬레이터")
     parser.add_argument(
@@ -124,6 +149,17 @@ def main():
         default=None,
         help="사업 유형. 심의기준·정량 평가 가중치·사전 점검 항목·필수 질의가 유형에 따라 달라집니다. "
              "(기본: auto, 원문 키워드로 판별)",
+    )
+    parser.add_argument(
+        "--human-review",
+        action="store_true",
+        help="쟁점 등록 뒤 정책 판단이 필요한 '상' 쟁점(정부지원 필요성·정책·규제, 출처 미확인)을 공방 전에 사람에게 묻습니다. "
+             "터미널이면 바로 묻고, 아니면 멈춘 뒤 --execution-id와 --human-answers로 이어 갑니다.",
+    )
+    parser.add_argument(
+        "--human-answers",
+        default=None,
+        help="사람 검토 답 JSON 파일. 예: {\"1\": \"상정\", \"9\": {\"decision\": \"제외\", \"note\": \"부처 협의 사항\"}}",
     )
     parser.add_argument(
         "--evidence",
@@ -188,6 +224,8 @@ def main():
         overrides["review_gate"] = args.gate
     if args.project_type:
         overrides["project_type"] = args.project_type
+    if args.human_review or args.human_answers:
+        overrides["human_review"] = True
     overrides = overrides or None
 
     provider = (
@@ -295,8 +333,16 @@ def main():
             report_project_id=args.report_project_id,
             evidence_paths=args.evidence,
             execution_id=args.execution_id,
+            human_reviewer=_human_reviewer(args.human_answers),
         )
-        
+        if decision == HUMAN_REVIEW_PENDING:
+            print("\n사람 검토를 기다리며 멈췄습니다. 위 쟁점 번호로 답 파일(JSON)을 만들어 같은 명령에 다음을 붙여 이어 가세요:")
+            print("  --execution-id <위 실행 번호> --human-answers <답 파일>  (체크포인트가 켜져 있어야 합니다)")
+            for item in (final_state.get("issue_ledger") or []):
+                if needs_human_review(item):
+                    print(f"  #{item['id']} [{item['criterion']}·{item['severity']}] {item['issue'][:80]}")
+            return 0
+
         print("\n" + "=" * 60)
         print("최종 심의 결과")
         print("=" * 60)

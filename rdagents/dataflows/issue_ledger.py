@@ -23,6 +23,8 @@ _REPORT_NAMES = {  # 등록기가 적은 보고서 이름 -> 상태 키 (패널 
     "수행": "feasibility_report", "규제": "regulatory_report", "윤리": "regulatory_report",
 }
 UNASKED, DEBATING, DEFENDED, FAILED = "공방 미상정", "공방 중", "방어 성공", "방어 실패"
+EXCLUDED = "사람 판단 제외"
+HUMAN_RAISE, HUMAN_DROP = "상정", "제외"   # 사람 검토(--human-review)의 판단
 
 
 def _compact(text: str) -> str:
@@ -130,6 +132,8 @@ def is_must(item: dict) -> bool:
     숫자 검산 불일치는 빼고 심각도 순서로만 다룬다: NDMI는 같은 표 1.1의 변형 3건이 모두 필수가 되어 상한을 넘겼다
     (예상 질의 추출기가 숫자 검산 질의를 따로 반드시 넣는다).
     """
+    if item.get("human") == HUMAN_RAISE:
+        return True  # 사람이 상정하라고 한 쟁점은 출처 검증과 관계없이 올린다
     return item["verified"] and (
         (item["criterion"] == "예산 타당성" and item.get("origin") != "숫자 검산")
         or item.get("origin") == "사전 점검 (누락)"
@@ -144,7 +148,7 @@ def debate_limit(ledger: list[dict], max_issues: int) -> int:
 
 def next_issue(ledger: list[dict], max_issues: int) -> dict | None:
     """다음에 상정할 쟁점 (반드시 올릴 쟁점 -> 출처 검증된 쟁점 -> 심각도 순). 상한에 닿았으면 None."""
-    asked = sum(item["status"] != UNASKED for item in ledger)
+    asked = sum(item["status"] in (DEBATING, DEFENDED, FAILED) for item in ledger)
     remaining = [item for item in ledger if item["status"] == UNASKED]
     if asked >= debate_limit(ledger, max_issues) or not remaining:
         return None
@@ -157,7 +161,45 @@ def failed_core_high(ledger: list[dict]) -> list[dict]:
 
 
 def ledger_counts(ledger: list[dict]) -> dict[str, int]:
-    return {s: sum(i["status"] == s for i in ledger) for s in (DEFENDED, FAILED, UNASKED)}
+    return {s: sum(i["status"] == s for i in ledger) for s in (DEFENDED, FAILED, UNASKED, EXCLUDED)}
+
+
+def needs_human_review(item: dict) -> bool:
+    """사람 판단에 넘길 쟁점: 아직 상정 전인 '상' 쟁점 중 정책 판단이 필요하거나 코드가 출처를 확인하지 못한 것.
+
+    정부지원 필요성·정책·규제 쟁점은 부처 정책 방향에 달려 있어 원문 대조만으로 상정 여부를 정하기 어렵고,
+    출처를 확인하지 못한 '상' 쟁점은 코드 규칙상 반드시 상정에서 빠지므로 사람이 살릴지 정한다.
+    """
+    return item["status"] == UNASKED and item["severity"] == "상" and (
+        item["criterion"] == "정부지원 필요성"
+        or item.get("source_report") in ("policy_report", "regulatory_report")
+        or not item["verified"]
+    )
+
+
+def human_review_request(ledger: list[dict]) -> list[dict]:
+    """interrupt로 사람에게 보여 줄 쟁점 목록 (JSON으로 저장·재개할 수 있게 기본 자료형만)."""
+    return [{"id": i["id"], "criterion": i["criterion"], "severity": i["severity"], "origin": i["origin"],
+             "issue": i["issue"], "verified": i["verified"], "verify_note": i["verify_note"]}
+            for i in ledger if needs_human_review(i)]
+
+
+def apply_human_decisions(ledger: list[dict], decisions: dict | None) -> list[dict]:
+    """사람의 판단을 원장에 반영한다. decisions: {쟁점 번호: '상정'|'제외' 또는 {'decision': ..., 'note': ...}}.
+
+    '상정'은 반드시 올릴 쟁점이 되고, '제외'는 공방에서 빠진다. 그 밖의 값이나 빠진 번호는 코드 규칙대로 둔다.
+    """
+    by_id = {str(k): (v if isinstance(v, dict) else {"decision": v}) for k, v in (decisions or {}).items()}
+    out = []
+    for item in ledger:
+        choice = by_id.get(str(item["id"]))
+        decision = str((choice or {}).get("decision") or "").strip()
+        if decision in (HUMAN_RAISE, HUMAN_DROP):
+            item = {**item, "human": decision, "human_note": str(choice.get("note") or "").strip()}
+            if decision == HUMAN_DROP:
+                item["status"] = EXCLUDED
+        out.append(item)
+    return out
 
 
 def render_ledger(ledger: list[dict]) -> str:
@@ -166,14 +208,17 @@ def render_ledger(ledger: list[dict]) -> str:
     # 개수에 '개'·'건'을 붙이지 않는다: 코드가 쓴 숫자에 '원문에 없는 수치' 표시가 붙었음
     out = ["# 쟁점 원장", "",
            f"- 쟁점 수 {len(ledger)}: 방어 성공 {counts[DEFENDED]} · 방어 실패 {counts[FAILED]} · "
-           f"공방 미상정 {counts[UNASKED]}",
+           f"공방 미상정 {counts[UNASKED]}" + (f" · 사람 판단 제외 {counts[EXCLUDED]}" if counts[EXCLUDED] else ""),
            f"- 방어 실패한 3대 기준 '상' 쟁점 수: {len(failed_core_high(ledger))} (남아 있으면 '승인' 불가)", "",
            "| # | 심의기준 | 심각도 | 출처 | 쟁점 | 질의 위원 | 결과 | 방어 판정 근거 |", "|---|---|---|---|---|---|---|---|"]
     for i in ledger:
         cite = f"{i['cite']} ({i['verify_note']})" if i["cite"] else i["verify_note"]
         note = i["defense_note"] or "-"
+        status = i["status"]
+        if i.get("human"):
+            status += f" (사람 판단: {i['human']}{' — ' + i['human_note'] if i.get('human_note') else ''})"
         out.append(f"| {i['id']} | {i['criterion']} | {i['severity']} | {i['origin']}: {cite} | {i['issue']} | "
-                   f"{i['member'] if i['status'] != UNASKED else '-'} | {i['status']} | {note} |")
+                   f"{i['member'] if i['status'] not in (UNASKED, EXCLUDED) else '-'} | {status} | {note} |")
     out += ["", "- 출처: 코드가 원문과 대조 (사전 점검·숫자 검산은 코드가 찾은 문제). 출처가 틀린 쟁점은 반드시 상정하지 않음.",
             "- 방어 판정: 발표자 답변의 출처·인용 구절이 원문과 맞고 원문에 없는 수치가 없을 때만 '방어 성공'."]
     return "\n".join(out)
@@ -182,7 +227,8 @@ def render_ledger(ledger: list[dict]) -> str:
 def ledger_summary(ledger: list[dict], width: int = 50) -> str:
     """위원장·최종 승인·예상 질의 지시문용 짧은 원장 (긴 토론 기록 대신)."""
     counts = ledger_counts(ledger)
-    rows = [f"쟁점 원장: 방어 성공 {counts[DEFENDED]} · 방어 실패 {counts[FAILED]} · 공방 미상정 {counts[UNASKED]}"]
+    rows = [f"쟁점 원장: 방어 성공 {counts[DEFENDED]} · 방어 실패 {counts[FAILED]} · 공방 미상정 {counts[UNASKED]}"
+            + (f" · 사람 판단 제외 {counts[EXCLUDED]}" if counts[EXCLUDED] else "")]
     order = sorted(ledger, key=lambda i: ({FAILED: 0, UNASKED: 1, DEFENDED: 2}.get(i["status"], 3),
                                           _SEVERITY_RANK.get(i["severity"], 3)))
     for i in order:

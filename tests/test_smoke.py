@@ -1317,6 +1317,47 @@ def test_checkpoint_resume():
 
 
 
+def test_human_review_interrupts_before_debate_and_resumes(tmp_path):
+    """--human-review: 쟁점 등록 뒤 정책 판단이 필요한 '상' 쟁점에서 멈추고, 사람의 판단(상정·제외)으로 이어 간다.
+    판단 함수가 없으면 멈춘 채 돌아오고, 같은 실행 번호로 다시 부르면 체크포인트에서 이어 간다."""
+    from rdagents.graph.review_graph import HUMAN_REVIEW_PENDING
+
+    fake = FakeLLM()
+    review_graph_module.create_llm_client = lambda **kwargs: _StubClient(fake)
+    config = {"results_dir": str(tmp_path / "logs"), "memory_log_path": str(tmp_path / "memory.md"),
+              "human_review": True, "checkpoint_enabled": True, "checkpoint_path": str(tmp_path / "cp.sqlite")}
+
+    # 1) 판단 함수 없이: 공방 전에 멈춤
+    graph = RDReviewGraph(config=config)
+    state, decision = graph.propagate(project_id="quantum_computing", execution_id="human-test")
+    graph.close()
+    assert decision == HUMAN_REVIEW_PENDING
+    assert state["issue_ledger"] and not state["review_debate_state"]["history"]   # 공방 전
+
+    # 2) 같은 실행 번호로 이어 감: 첫 쟁점은 제외, 나머지는 상정
+    seen = {}
+
+    def reviewer(payload):
+        seen.update(payload)
+        ids = [item["id"] for item in payload["issues"]]
+        return {str(ids[0]): {"decision": "제외", "note": "부처 협의 사항"}, **{str(i): "상정" for i in ids[1:]}}
+
+    graph = RDReviewGraph(config=config)
+    state, decision = graph.propagate(project_id="quantum_computing", execution_id="human-test",
+                                      human_reviewer=reviewer)
+    graph.close()
+    assert decision != HUMAN_REVIEW_PENDING and json.loads(decision)["verdict"]
+    asked = seen["issues"]
+    assert asked and all(item["severity"] == "상" for item in asked) and "상정" in seen["guide"]
+    ledger = {item["id"]: item for item in state["issue_ledger"]}
+    assert ledger[asked[0]["id"]]["status"] == "사람 판단 제외"
+    assert all(ledger[item["id"]]["status"] == "방어 실패" for item in asked[1:])   # 상정 -> 공방에 오름
+    assert f"(쟁점 #{asked[0]['id']}," not in state["review_debate_state"]["history"]
+    assert len(asked) >= 2
+    table = (Path(state["saved_results_dir"]) / "02b_쟁점원장.md").read_text(encoding="utf-8")
+    assert "사람 판단 제외 1" in table and "(사람 판단: 제외 — 부처 협의 사항)" in table
+
+
 def test_token_estimate_counts_calls_without_api():
     """추정기는 API 없이 그래프를 끝까지 돌려 노드별 호출을 세고, 도구 상한·체크포인트 진행을 반영한다."""
     import tempfile

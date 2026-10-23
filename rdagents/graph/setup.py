@@ -29,6 +29,7 @@ from rdagents.agents import (
     create_tech_value_analyst,
 )
 from rdagents.agents.utils.agent_states import ReviewAgentState
+from rdagents.agents.researchers.human_issue_review import create_human_issue_review
 from rdagents.dataflows.issue_ledger import render_ledger
 from rdagents.dataflows.output_validation import mark_texts
 from rdagents.dataflows.project_loader import (
@@ -151,6 +152,7 @@ def setup_graph(
     analyst_plan: AnalystExecutionPlan,
     deep_model_name: str = "deep-model",
     quick_model_name: str = "quick-model",
+    human_review: bool = False,
 ) -> StateGraph:
     """R&D 심의 파이프라인 그래프 구성."""
     graph = StateGraph(ReviewAgentState)
@@ -234,7 +236,13 @@ def setup_graph(
 
 
     # 쟁점 등록 -> 쟁점별 심사 공방 루프 (패널 질의 -> 발표자 방어, 쟁점이 끝나면 위원장)
-    graph.add_edge("Issue Registrar", "Panel Examiner")
+    # --human-review: 쟁점 등록 뒤 정책 판단이 필요한 쟁점을 사람에게 묻고(interrupt) 공방으로 간다
+    if human_review:
+        graph.add_node("Human Issue Review", _timed_node("Human Issue Review", create_human_issue_review()))
+        graph.add_edge("Issue Registrar", "Human Issue Review")
+        graph.add_edge("Human Issue Review", "Panel Examiner")
+    else:
+        graph.add_edge("Issue Registrar", "Panel Examiner")
     graph.add_conditional_edges(
         "Panel Examiner",
         logic.should_continue_review_debate,
