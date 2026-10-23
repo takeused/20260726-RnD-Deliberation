@@ -1014,6 +1014,36 @@ def test_panel_asks_one_ledger_issue_and_stops_when_done():
     assert done["review_debate_state"]["current_response"] == "Done" and not seen   # LLM 호출 없음
 
 
+def test_audit_team_reads_confirmed_facts_and_number_rules():
+    """재정 검토팀 3명은 코드가 확인한 사실(요청 예산·쟁점 원장)과 수치 규칙을 읽는다.
+    요청 예산을 원문에서 찾지 못했으면 금액·비율을 제시하지 말라고 알린다."""
+    from rdagents.agents.auditors import (
+        create_aggressive_auditor, create_conservative_auditor, create_neutral_auditor,
+    )
+    from rdagents.dataflows.issue_ledger import build_ledger
+
+    seen = []
+
+    class Capture:
+        def invoke(self, prompt_val):
+            seen.append(prompt_val.to_string())
+            return AIMessage(content="[가짜 발언]")
+
+    ledger = build_ledger([], [{"issue": "예산 산출 근거 누락", "criterion": "예산 타당성", "severity": "상",
+                                "origin": "사전 점검 (누락)", "cite": "", "quote": "", "verified": True,
+                                "verify_note": "코드 점검"}], "공공임무형")
+    audit = {"history": "", "aggressive_history": "", "conservative_history": "", "neutral_history": "", "count": 0}
+    for create in (create_aggressive_auditor, create_conservative_auditor, create_neutral_auditor):
+        create(Capture())({"issue_ledger": ledger, "project_facts": {}, "budget_coordination_plan": "{}",
+                           "audit_debate_state": audit})
+    assert len(seen) == 3
+    assert all("요청 예산: 없음 (금액·비율을 제시하지 말 것)" in s and "예산 산출 근거 누락" in s
+               and "[확인 필요: 무엇]" in s for s in seen)
+    create_neutral_auditor(Capture())({"issue_ledger": [], "project_facts": {"requested_budget_eok": 40},
+                                       "audit_debate_state": audit})
+    assert "확인된 요청 예산: 40억 원" in seen[-1] and "쟁점 원장 없음" in seen[-1]
+
+
 def test_issue_ledger_verifies_citations_orders_debate_and_judges_defense(tmp_path):
     """쟁점 원장: 출처를 원문과 대조하고, 반드시 올릴 쟁점부터 상정하고, 발표자 답변의 출처·인용·수치로 방어를 판정하고,
     방어 실패한 3대 기준 '상' 쟁점이 남으면 '승인'을 거부한다."""

@@ -2,6 +2,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from rdagents.agents.auditors.common import AUDIT_RULES, audit_facts
 from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 
 
@@ -18,12 +19,14 @@ def create_aggressive_auditor(llm):
             "재난안전형은 인명·재산 피해 저감, 대응역량과 사회 회복력 향상을 우선 논거로 삼으세요.\n"
             "3. 타 검토관(재정 건전성 검토관 등)의 이전 발언이 있다면 이를 반박하세요.\n"
             "4. 리스크를 수용하고 도전적인 목표를 지향해야 한다고 주장하세요."
+            + AUDIT_RULES
             + get_language_instruction()
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
-            ("human", "다음은 예산 조정관의 1차 예산 조정안입니다:\n\n{budget_plan}\n\n"
+            ("human", "확인된 사실 (코드가 원문·쟁점 원장에서 확인):\n{facts}\n\n"
+                      "다음은 예산 조정관의 1차 예산 조정안입니다:\n\n{budget_plan}\n\n"
                       "타 검토관들의 이전 발언 내역:\n{audit_history}\n\n"
                       "위 내용을 바탕으로 적극적인 투자 확대를 지지하는 논리를 전개해 주세요."),
         ])
@@ -31,7 +34,7 @@ def create_aggressive_auditor(llm):
         budget_plan = state.get("budget_coordination_plan", "예산안 없음")
         audit_history = clip_text(state["audit_debate_state"]["history"], state) or "이전 발언이 없습니다."
 
-        prompt_val = prompt.invoke({"budget_plan": budget_plan, "audit_history": audit_history})
+        prompt_val = prompt.invoke({"facts": audit_facts(state), "budget_plan": budget_plan, "audit_history": audit_history})
         response = llm.invoke(prompt_val)
         new_content = response.content
 
