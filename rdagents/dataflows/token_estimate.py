@@ -121,7 +121,10 @@ def sample_instance(schema):
     if schema.__name__ == "BudgetProposal":
         values["proposed_budget_billion"] = values["original_budget_billion"]
     elif schema.__name__ == "FinalDecision":
+        # 가짜 발표자는 근거 없음을 인정해 모든 쟁점이 방어 실패 -> '승인'은 쟁점 원장 정합성 검증에서 거부되므로 조건부승인
         values["approved_budget_billion"] = 100.0
+        values["verdict"] = "조건부승인"
+        values["conditions"] = "[가짜 이행 조건]"
     elif schema.__name__ == "QuestionVerificationReport":
         from rdagents.agents.schemas import MatchLevel, QuestionMatch
 
@@ -132,6 +135,12 @@ def sample_instance(schema):
                           matched_prediction=None, note="예측에 없음"),
         ]
         values["missed_topics_summary"] = "[가짜 미적중 요약]"
+    elif schema.__name__ == "IssueRegister":
+        from rdagents.agents.schemas import CriterionTag, RegisteredIssue, Severity
+
+        values["issues"] = [RegisteredIssue(issue=f"[가짜 쟁점: {c.value}]", criterion=c, severity=Severity.HIGH,
+                                            source_report="경제/재무 타당성 분석")
+                            for c in (CriterionTag.GOV_SUPPORT, CriterionTag.URGENCY, CriterionTag.BUDGET)]
     elif schema.__name__ == "ReviewPreparationReport":
         from rdagents.agents.schemas import AnticipatedQuestion, CriterionTag, ImprovementItem, Severity
 

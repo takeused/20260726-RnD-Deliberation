@@ -3,13 +3,15 @@
 import json
 import os
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from langchain_core.runnables.config import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
-from rdagents.dataflows.plan_precheck import run_precheck
+from rdagents.dataflows.plan_precheck import precheck_issues, run_precheck
 from rdagents.dataflows.project_type import classify as classify_project_type
 from rdagents.dataflows.project_type import render_section as render_type_section
 from rdagents.default_config import DEFAULT_CONFIG
@@ -30,6 +32,9 @@ from rdagents.graph.analyst_execution import build_analyst_execution_plan
 from rdagents.graph.propagation import Propagator
 from rdagents.graph.setup import setup_graph
 from rdagents.llm_clients.factory import create_llm_client
+
+
+HUMAN_REVIEW_PENDING = "사람 검토 대기"
 
 
 class RDReviewGraph:
@@ -67,6 +72,7 @@ class RDReviewGraph:
             analyst_plan=self.analyst_plan,
             deep_model_name=self.config["deep_think_llm"],
             quick_model_name=self.config["quick_think_llm"],
+            human_review=bool(self.config.get("human_review")),
         )
 
         self._checkpoint_conn = None
@@ -76,6 +82,8 @@ class RDReviewGraph:
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             self._checkpoint_conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
             checkpointer = SqliteSaver(self._checkpoint_conn)
+        elif self.config.get("human_review"):
+            checkpointer = InMemorySaver()  # interrupt는 체크포인트가 있어야 멈췄다 이어 갈 수 있다 (같은 프로세스 안에서만)
         self.graph = builder.compile(checkpointer=checkpointer)
 
     def _build_llm_kwargs(self) -> dict:
@@ -108,11 +116,14 @@ class RDReviewGraph:
         report_project_id: str | None = None,
         evidence_paths: list[str] | None = None,
         execution_id: str | None = None,
+        human_reviewer: Callable[[dict], dict] | None = None,
     ) -> tuple[dict[str, Any], str]:
         """전체 심의 파이프라인을 실행합니다.
 
         project_id: sample_data의 구조화 JSON 모드.
         report_path: 기획보고서 원문(.md/.txt) 모드. 지정 시 project_id보다 우선.
+        human_reviewer: human_review 설정에서 그래프가 멈추면 받은 쟁점 목록(dict)으로 사람의 판단을 돌려주는 함수.
+            없으면 멈춘 채로 (상태, HUMAN_REVIEW_PENDING)을 돌려준다 — 같은 execution_id로 다시 부르면 이어 간다.
         """
         if report_path:
             project_id = set_current_report(
@@ -140,8 +151,10 @@ class RDReviewGraph:
         type_result = classify_project_type(
             get_source_lines() or self._sample_lines(project_id), self.config.get("project_type")
         )
-        # 원문 모드면 심의 전에 규칙 기반 사전 점검 (LLM 호출 없음)
-        precheck_md, precheck_brief = run_precheck(*get_report_text_and_name(), type_result.project_type)
+        # 원문 모드면 심의 전에 규칙 기반 사전 점검 (LLM 호출 없음). 근거 파일(--evidence)도 함께 본다
+        report_text, report_name = get_report_text_and_name()
+        evidence = {name: "\n".join(lines) for name, lines in get_source_lines().items() if name != report_name}
+        precheck_md, precheck_brief = run_precheck(report_text, report_name, type_result.project_type, evidence)
         # 판별 결과를 사전 점검 문서 맨 앞에 둔다 ('## 숫자 검산' 절 뒤에 두면 수치 표시의 계산값 근거에 섞임)
         precheck_md = render_type_section(type_result) + ("\n\n" + precheck_md if precheck_md else "")
 
@@ -161,6 +174,8 @@ class RDReviewGraph:
             precheck_md=precheck_md,
             precheck_brief=precheck_brief,
             project_type=type_result.project_type,
+            precheck_issues=precheck_issues(report_text, report_name, type_result.project_type, evidence=evidence),
+            max_debate_issues=int(self.config.get("max_debate_issues") or 6),
             prompt_char_budget=int(self.config.get("prompt_char_budget") or 0),
             tool_result_char_budget=int(self.config.get("tool_result_char_budget") or 0),
             max_analyst_tool_calls=int(self.config.get("max_analyst_tool_calls") or 0),
@@ -204,14 +219,25 @@ class RDReviewGraph:
         if self.debug:
             print(f"=== R&D 심의 시뮬레이션 시작: {project_id} ===")
 
-        for s in self.graph.stream(stream_input, **graph_args):
-            final_state = s
-            messages = s.get("messages") or []
-            if messages:
-                speaker = getattr(messages[-1], "name", None)
-                if speaker and speaker != last_speaker:
-                    last_speaker = speaker
-                    print(f"--> [발언 완료] {speaker}")
+        while True:
+            pending = None
+            for s in self.graph.stream(stream_input, **graph_args):
+                if "__interrupt__" in s:  # 사람 검토 노드가 멈춤 (상태 청크가 아님)
+                    pending = s["__interrupt__"][0].value
+                    continue
+                final_state = s
+                messages = s.get("messages") or []
+                if messages:
+                    speaker = getattr(messages[-1], "name", None)
+                    if speaker and speaker != last_speaker:
+                        last_speaker = speaker
+                        print(f"--> [발언 완료] {speaker}")
+            if pending is None:
+                break
+            if human_reviewer is None:
+                print(f"--> 사람 검토 대기: 쟁점 {len(pending.get('issues', []))}개 (실행 번호 {execution_id})")
+                return final_state or {}, HUMAN_REVIEW_PENDING
+            stream_input = Command(resume=human_reviewer(pending))
 
         if final_state is None:
             return {}, "결정 도출 실패"

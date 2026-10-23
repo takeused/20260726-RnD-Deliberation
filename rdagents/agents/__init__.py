@@ -1,3 +1,4 @@
+from .analysts.domain_experts import create_domain_expert_panel
 from .analysts.economic import create_economic_analyst
 from .analysts.feasibility import create_feasibility_analyst
 from .analysts.policy import create_policy_analyst
@@ -14,11 +15,13 @@ from .managers.quality_assessor import create_quality_assessor
 from .managers.review_manager import create_review_manager
 from .managers.rereview_comparator import create_rereview_comparator
 from .researchers.panel_examiner import create_panel_examiner
+from .researchers.issue_registrar import create_issue_registrar
 from .researchers.project_defender import create_project_defender
 
 __all__ = [
     # Analysts
     "create_tech_value_analyst",
+    "create_domain_expert_panel",
     "create_tech_trend_analyst",
     "create_economic_analyst",
     "create_policy_analyst",
@@ -27,6 +30,7 @@ __all__ = [
     # Researchers
     "create_panel_examiner",
     "create_project_defender",
+    "create_issue_registrar",
     # Coordinator
     "create_budget_coordinator",
     # Auditors

@@ -10,6 +10,13 @@ class ConditionalLogic:
         self.max_debate_rounds = max_debate_rounds
         self.max_audit_rounds = max_audit_rounds
 
+    def should_continue_domain_experts(self, state: ReviewAgentState):
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_domain_experts"
+        return "Msg Clear Domain Experts"
+
     def should_continue_tech_value(self, state: ReviewAgentState):
         messages = state["messages"]
         last_message = messages[-1]
@@ -53,13 +60,16 @@ class ConditionalLogic:
         return "Msg Clear Regulatory"
 
     def should_continue_review_debate(self, state: ReviewAgentState) -> str:
-        """심사 공방 라운드 제어 (패널 질의 -> 발표자 방어 = 1라운드)."""
-        # count는 한 명이 발언할 때마다 1씩 증가, 라운드당 2 증가
-        if state["review_debate_state"]["count"] >= 2 * self.max_debate_rounds:
-            return "Review Manager"
+        """쟁점별 심사 공방 제어 (쟁점 하나 = 패널 질의 -> 발표자 방어).
 
-        # 패널 질의 다음은 발표자 방어, 그 다음은 다시 패널
-        if state["review_debate_state"]["current_response"] == "Examiner":
+        상정할 쟁점이 남았는지는 패널 노드가 쟁점 원장으로 판단해 current_response="Done"으로 알린다.
+        count 상한은 원장이 비정상일 때 무한 루프를 막는 안전장치 (반드시 올릴 쟁점 +2까지 허용).
+        """
+        debate = state["review_debate_state"]
+        hard_cap = 2 * (int(state.get("max_debate_issues") or 6) + 2)
+        if debate["current_response"] == "Done" or debate["count"] >= hard_cap:
+            return "Review Manager"
+        if debate["current_response"] == "Examiner":
             return "Project Defender"
         return "Panel Examiner"
 
