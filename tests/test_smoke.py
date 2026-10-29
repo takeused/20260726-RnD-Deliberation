@@ -206,6 +206,21 @@ def test_table_unit_and_computed_values_are_not_marked(tmp_path):
     assert mark_unsupported_numbers({"07.md": "계산값 3.2%"})[1] == [("07.md", 1, ["3.2%"])]
 
 
+def test_row_label_units_and_triangle_cells_are_source_numbers(tmp_path):
+    """단위가 행 이름('올해(억원)', '증감률(%)')에만 있고 칸에 ▲가 붙은 표: 산출물이 '660억', '10.0%'로 옮겨 써도
+    원문 수치다 (공개 전 기획보고서 실행에서 표의 합계·증감률이 26줄씩 원문에 없는 수치로 표시됐음)."""
+    from rdagents.dataflows.output_validation import mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("|구분|합계|가 분야|나 분야|\n|---|---|---|---|\n"
+                      "|올해(억원)|660|110|550|\n|작년(억원)|600|100|500|\n|증감률(%)|▲10.0|▲10.0|▲10.0|\n",
+                      encoding="utf-8")
+    set_current_report(str(report), project_id="row-units")
+    _, found = mark_unsupported_numbers({"07.md": "올해 660억 원, 작년 600억, 증감률 10.0%, 신규 9.9%\n"})
+    assert found == [("07.md", 1, ["9.9%"])]
+
+
 def test_numbers_are_marked_as_nodes_write(tmp_path):
     """노드가 쓴 보고서·토론 글에 바로 표시를 붙여 뒤 노드가 표시된 글을 읽는다. 흐름 제어 값과 JSON 필드는 그대로."""
     from rdagents.dataflows.output_validation import UNSUPPORTED_NOTE

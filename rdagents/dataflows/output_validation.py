@@ -153,17 +153,21 @@ def _table_numbers(lines: list[str]) -> set[str]:
 
     out: set[str] = set()
     for table in budget_check.find_tables(lines):
-        for c in range(1, len(table.header)):
-            unit = "%" if budget_check.RATIO_HEADER.search(table.header[c]) else (table.col_unit(c) or "")
-            if not unit:
-                continue
-            for _, cells in table.rows:
-                cell = re.sub(r"\*\*|<br>|%", "", cells[c]).strip()
+        for _, cells in table.rows:
+            # 단위가 행 이름에만 있는 표 ('올해(억원)', '증감률(%)')도 있다 (공개 전 기획보고서의 유형별 예산 표)
+            label = cells[0]
+            m = re.search(r"\(([^)]*)\)", label)
+            row_unit = "%" if "%" in label else (budget_check.norm_unit(m.group(1)) if m else None)
+            for c in range(1, len(table.header)):
+                col_unit = "%" if budget_check.RATIO_HEADER.search(table.header[c]) else table.col_unit(c)
+                # 칸 앞의 ▲·▼·△(증감 표시)는 떼고 숫자만 본다
+                cell = re.sub(r"\*\*|<br>|%|^[▲▼△]", "", cells[c].strip()).strip()
                 if not re.fullmatch(r"\d[\d,]*(?:\.\d+)?", cell):
                     continue
-                if unit in budget_check.UNIT_WON:  # 금액 열은 억·조로 바꿔 둔다 ('총사업비(백만원)' 열의 4,500)
-                    out |= _money_tokens(float(cell.replace(",", "")) * budget_check.UNIT_WON[unit])
-                out |= _numbers(cell + unit)
+                for unit in {u for u in (col_unit, row_unit) if u}:
+                    if unit in budget_check.UNIT_WON:  # 금액 열은 억·조로 바꿔 둔다 ('총사업비(백만원)' 열의 4,500)
+                        out |= _money_tokens(float(cell.replace(",", "")) * budget_check.UNIT_WON[unit])
+                    out |= _numbers(cell + unit)
     return out
 
 
