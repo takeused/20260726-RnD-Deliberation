@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from contextvars import ContextVar
@@ -244,17 +245,32 @@ def _raw_report(section_hint: str) -> str | None:
     return _render_search(context, section_hint)
 
 
+def _bm25_scores(texts: list[str], terms: set[str], k1: float = 1.2, b: float = 0.75) -> list[float]:
+    """조각별 BM25 점수: 드문 단어일수록 무겁게(idf), 같은 단어 반복은 포화(k1), 긴 조각은 보정(b).
+
+    전에는 질의 단어가 나온 횟수를 그냥 더해, 고정 질의 '기술 상세(TRL, 핵심기술)'가 'TRL'이 나오는 조각 대신
+    '기술'이 많은 조각 두 개를 매번 돌려줬다 (공개 전 기획보고서 실행: 분석가 모두가 같은 두 조각만 보고 분석이 쏠림).
+    """
+    if not texts:
+        return []
+    n, avg = len(texts), (sum(map(len, texts)) / len(texts)) or 1
+    idf = {t: math.log(1 + (n - (df := sum(t in x for x in texts)) + 0.5) / (df + 0.5)) for t in terms}
+    scores = []
+    for text in texts:
+        norm = k1 * (1 - b + b * len(text) / avg)
+        scores.append(sum(idf[t] * tf * (k1 + 1) / (tf + norm) for t in terms if (tf := text.count(t))))
+    return scores
+
+
 def _render_search(context: ProjectContext, section_hint: str) -> str:
-    """청크 인덱스에서 키워드 빈도 기반 상위 청크를 골라 출처와 함께 렌더링."""
+    """청크 인덱스에서 BM25 점수 상위 청크를 골라 출처와 함께 렌더링."""
     query_terms = {
         term.casefold()
         for term in re.findall(r"[0-9A-Za-z가-힣]{2,}", section_hint)
         if term not in {"관련", "내용", "정보", "상세"}
     }
-    ranked_all = sorted(
-        enumerate(context.chunks),
-        key=lambda item: (-sum(item[1].text.casefold().count(term) for term in query_terms), item[0]),
-    )
+    scores = _bm25_scores([chunk.text.casefold() for chunk in context.chunks], query_terms)
+    ranked_all = sorted(enumerate(context.chunks), key=lambda item: (-scores[item[0]], item[0]))
     ranked = []
     # 외부 근거가 있으면 기본 top-k 내에서 사업보고서와 외부근거를 모두 노출한다.
     kinds = {chunk.source_kind for chunk in context.chunks}
