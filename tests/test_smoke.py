@@ -253,6 +253,65 @@ def test_numbers_are_marked_as_nodes_write(tmp_path):
     assert "⚠️[원문에 없는 수치: …]" in get_language_instruction()
 
 
+def test_unsupported_case_names_are_marked(tmp_path):
+    """따옴표로 든 사례·사업 이름에 원문에 없는 낱말이 있으면 수치처럼 줄 끝에 표시한다.
+    원문 이름을 띄어쓰기만 바꿔 쓴 것, 이름이 아닌 따옴표 구(바꿔 쓴 문장·심의 용어)는 통과."""
+    from rdagents.dataflows.output_validation import (
+        NAME_NOTE,
+        UNSUPPORTED_NOTE,
+        build_validation_report,
+        mark_unsupported_numbers,
+    )
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("본 사업은 하천 범람 예측 플랫폼을 개발한다. 기존 재난 대응 체계는 한계가 있다.\n",
+                      encoding="utf-8")
+    set_current_report(str(report), project_id="names")
+    docs = {"02.md": "“민간이 이미 ‘해안도시 홍수경보 파일럿’을 운영 중입니다.\n"   # 원문에 없는 사례 -> 표시 (겹친 따옴표)
+                     "본 사업의 '하천범람 예측플랫폼'은 독창적이다.\n"            # 띄어쓰기만 다름 -> 통과
+                     "“시장실패·고위험 투자”라는 논리는 약하다.\n"                 # 이름이 아닌 구 -> 통과
+                     "해외 “FloodSense” 사례(대응시간 30% 단축)와 비교\n"         # 영문 이름 + 수치
+                     "‘범람 대응 파일럿’과 ‘하천 범람 예측 사업’\n"}             # 원문 낱말을 이어 붙인 이름 -> 표시
+    marked, found = mark_unsupported_numbers(docs)
+    lines = marked["02.md"].splitlines()
+    assert lines[0].endswith(NAME_NOTE.format("해안도시 홍수경보 파일럿"))
+    assert lines[1] == "본 사업의 '하천범람 예측플랫폼'은 독창적이다."
+    assert lines[2] == "“시장실패·고위험 투자”라는 논리는 약하다."
+    assert lines[3].endswith(UNSUPPORTED_NOTE.format("30%") + " " + NAME_NOTE.format("FloodSense"))
+    assert lines[4].endswith(NAME_NOTE.format("범람 대응 파일럿"))       # 끝말만 다른 원문 이름('…사업')은 통과
+    assert found == [("02.md", 4, ["30%"])]                              # 수치 목록에는 수치만
+    assert mark_unsupported_numbers(marked)[0] == marked                 # 다시 돌려도 두 번 붙이지 않음
+    text = build_validation_report(marked, found)
+    assert "**원문에 없는 명칭을 본문에 표시한 줄 수**: 3" in text
+    assert "| 해안도시 홍수경보 파일럿 | 1 | `02.md` |" in text
+
+
+def test_questions_on_unsupported_claims_go_last(monkeypatch, tmp_path):
+    """예상 질의 문장에 원문에 없는 수치·명칭이 들어 있으면 목록 맨 뒤로 보낸다 (지어낸 전제로 시작하는 질의)."""
+    from rdagents.agents.managers import question_extractor as qe
+    from rdagents.agents.schemas import ReviewPreparationReport
+    from rdagents.agents.utils.structured import StructuredCallResult
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원. 하천 범람 예측 플랫폼.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="question-order")
+    model = _default_instance(ReviewPreparationReport)
+    texts = ["민간의 ‘해안도시 홍수경보 파일럿’이 있는데 왜 정부가 해야 합니까?",
+             "총사업비 120억 원의 비목별 근거는?",
+             "대응시간 30% 단축 근거는?"]
+    model.questions = [q.model_copy(update={"question": t}) for q, t in zip(model.questions, texts)] \
+        + model.questions[len(texts):]
+    monkeypatch.setattr(qe, "invoke_structured_model", lambda *a, **k: StructuredCallResult(model))
+    state = {"review_debate_state": {"history": ""}, "audit_debate_state": {"history": ""}, "precheck_md": ""}
+    result = qe.create_question_extractor(None)(state)
+    order = [q["question"] for q in json.loads(result["preparation_report_json"])["questions"]]
+    assert order[0] == texts[1]
+    assert order[-2:] == [texts[0], texts[2]]                            # 지어낸 전제의 질의는 순서를 지켜 맨 뒤로
+    assert result["anticipated_questions_md"].index(texts[1]) < result["anticipated_questions_md"].index(texts[0])
+
+
 def test_million_won_amounts_match_eok_in_outputs(tmp_path):
     """원문의 백만원·천원 금액과 억·조 금액을 산출물이 다른 단위로 바꿔 써도 원문 수치로 본다.
     (기관고유 샘플 보고서에서 '14,160백만원'을 '141.6억 원'으로 쓴 줄이 26줄 표시됐음) 단위를 틀리면 그대로 표시."""
@@ -488,6 +547,7 @@ def test_common_prompt_forbids_fabricated_evidence():
     assert "제공되지 않은 통계" in instruction
     assert "[확인 필요: 필요한 자료]" in instruction
     assert "사업보고서 주장" in instruction and "외부근거 확인" in instruction
+    assert "원문에 없는 명칭" in instruction
 
 
 def test_review_criteria_adapts_to_public_safety_projects():

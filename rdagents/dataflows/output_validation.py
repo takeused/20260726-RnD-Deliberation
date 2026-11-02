@@ -108,8 +108,16 @@ def check_citation_content(claim_line: str, cited_text: str) -> list[str]:
 # 원문에 없는 수치를 본문에 표시할 때 건너뛰는 파일: 코드가 만든 파일과 구조화 데이터
 _NOT_LLM_TEXT = _CODE_GENERATED | {"12_실행관측성.md", "07b_예상질의.json"}
 UNSUPPORTED_NOTE = "⚠️[원문에 없는 수치: {}]"
+NAME_NOTE = "⚠️[원문에 없는 명칭: {}]"
 _NUMBER_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)(.*)$")
-_MARK_RE = re.compile(r"\s*⚠️\[원문에 없는 수치: [^\]]*\]")
+_MARK_RE = re.compile(r"\s*⚠️\[원문에 없는 (?:수치|명칭): [^\]]*\]")
+_NAME_MARK_RE = re.compile(r"⚠️\[원문에 없는 명칭: ([^\]]*)\]")
+# 원문에 없는 사례·사업 이름. 공개 전 기획보고서 실행에서 원문에 없는 민간 '○○ 파일럿'이 공방·예상 질의 1번까지 갔다.
+# 따옴표 구를 다 보면 바꿔 쓴 문장·심의 용어가 대부분 걸리므로, 이름으로 끝나는 구와 영문 고유명만 본다
+# 안쪽 따옴표에서 다시 시작한다 ("민간 기업이 ‘○○ 파일럿’ 등…"의 이름은 '○○ 파일럿')
+_QUOTED_RE = re.compile(r"[‘'“\"「]([^‘’'“”\"「」\n]{3,40})[’'”\"」]")
+_NAME_SUFFIX_RE = re.compile(r"(?:파일럿|시범사업|사업|프로젝트|플랫폼|시스템|센터|서비스)$")
+_PROPER_LATIN_RE = re.compile(r"[A-Za-z]*[A-Z][A-Za-z]*[a-z][A-Za-z]*")
 
 
 def _split_number(token: str) -> tuple[float, int, str]:
@@ -204,6 +212,35 @@ def unsupported_numbers(line: str, index: Mapping[str, list[float]]) -> list[str
     return out
 
 
+def _squash(text: str) -> str:
+    """띄어쓰기·하이픈·가운뎃점 차이를 없앤 비교용 글 ('하천범람 예측플랫폼' = '하천 범람 예측 플랫폼')."""
+    return re.sub(r"[\s\-·•ㆍ,./]", "", normalize_citation_text(text))
+
+
+def unsupported_names(line: str, squashed_source: str) -> list[str]:
+    """따옴표로 든 사례·사업 이름 중 원문에 없는 것.
+
+    '○○ 사업'·'○○ 시스템'은 끝말을 뺀 앞부분이 원문에 이어서 나와야 한다 (원문이 같은 대상을 '플랫폼' 대신 '사업'으로
+    부를 수 있으므로 끝말은 보지 않는다). 낱말마다 따로 보면 원문에 흩어진 낱말로 지어낸 이름이 통과했다.
+    영문 고유명은 그 낱말이 원문에 있는지만 본다.
+    """
+    out = []
+    for m in _QUOTED_RE.finditer(_CITATION_RE.sub("", line)):
+        name = m.group(1).strip()
+        core = re.sub(r"\([^)]*\)", "", name).strip()  # '○○시스템(영문 약칭)'의 괄호 설명은 뺀다
+        if _squash(core) in squashed_source:
+            continue
+        suffix = _NAME_SUFFIX_RE.search(core)
+        if suffix:
+            stem = _squash(core[:suffix.start()])
+            missing = bool(stem) and stem not in squashed_source
+        else:
+            missing = any(_squash(w) not in squashed_source for w in _PROPER_LATIN_RE.findall(core))
+        if missing and name not in out:
+            out.append(name)
+    return out
+
+
 def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, str], list[tuple[str, int, list[str]]]]:
     """LLM이 쓴 산출물에서 입력 원문에 없는 수치가 든 줄 끝에 표시를 붙인다. (표시한 문서들, [(파일, 줄, 수치)]).
 
@@ -212,9 +249,11 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     """
     precheck = documents.get("00b_사전점검.md", "")
     computed = precheck.split("## 숫자 검산", 1)[1] if "## 숫자 검산" in precheck else ""
-    index = source_number_index(get_source_lines(), computed)
+    source_lines = get_source_lines()
+    index = source_number_index(source_lines, computed)
+    squashed_source = _squash("\n".join("\n".join(lines) for lines in source_lines.values()))
     marked, found = dict(documents), []
-    if not index:
+    if not source_lines:
         return marked, found  # 원문 모드가 아니면(샘플 JSON) 대조할 원문이 없음
     for filename, content in documents.items():
         if filename in _NOT_LLM_TEXT:
@@ -223,10 +262,13 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
         lines = [_MARK_RE.sub("", line) for line in content.splitlines()]
         for i, line in enumerate(lines):
             missing = unsupported_numbers(line, index)
-            if not missing:
+            names = unsupported_names(line, squashed_source)
+            if not missing and not names:
                 continue
-            found.append((filename, i + 1, missing))
-            note = UNSUPPORTED_NOTE.format(", ".join(missing))
+            if missing:
+                found.append((filename, i + 1, missing))
+            note = " ".join([UNSUPPORTED_NOTE.format(", ".join(missing))] * bool(missing)
+                            + [NAME_NOTE.format(", ".join(names))] * bool(names))
             stripped = line.rstrip()
             # 표 줄은 마지막 칸 안에 넣어야 표가 깨지지 않는다
             lines[i] = f"{stripped[:-1].rstrip()} {note} |" if stripped.endswith("|") else f"{stripped} {note}"
@@ -248,6 +290,35 @@ def mark_texts(texts: Mapping[str, str], precheck_md: str = "") -> dict[str, str
 
 
 UNSUPPORTED_SUMMARY_TITLE = "## 검증 안 된 수치 요약 (수치별)"
+
+
+def has_unsupported_claims(texts: list[str], precheck_md: str = "") -> list[bool]:
+    """글마다 원문에 없는 수치·명칭이 들어 있는지 (이미 붙은 표시도 포함). 원문이 없으면(샘플 JSON) 모두 False."""
+    try:
+        marked, _ = mark_unsupported_numbers(
+            {"00b_사전점검.md": precheck_md, **{f"{i}.txt": t for i, t in enumerate(texts)}})
+    except RuntimeError:
+        return [False] * len(texts)
+    return [bool(_MARK_RE.search(marked[f"{i}.txt"])) for i in range(len(texts))]
+
+
+def unsupported_name_summary(documents: Mapping[str, str]) -> tuple[int, list[str]]:
+    """본문에 붙은 '원문에 없는 명칭' 표시를 이름별로 묶는다. (표시한 줄 수, 표)."""
+    groups: dict[str, list[str]] = {}
+    marked_lines = 0
+    for filename, content in documents.items():
+        for line in content.splitlines():
+            names = [n.strip() for m in _NAME_MARK_RE.finditer(line) for n in m.group(1).split(", ")]
+            marked_lines += bool(names)
+            for name in names:
+                groups.setdefault(name, []).append(filename)
+    if not groups:
+        return 0, ["- 없음"]
+    rows = ["| 명칭 | 나온 줄 수 | 문서 |", "|---|---:|---|"]
+    for name in sorted(groups, key=lambda n: -len(groups[n])):
+        files = ", ".join(dict.fromkeys(f"`{f}`" for f in groups[name]))
+        rows.append(f"| {name} | {len(groups[name])} | {files} |")
+    return marked_lines, rows
 
 
 def _excerpt(line: str, token: str, width: int = 70) -> str:
@@ -347,16 +418,21 @@ def build_validation_report(documents: Mapping[str, str],
                         )
     # 내용 대조는 경험적 검사라 상태(통과/검토 필요)를 바꾸지 않고 확인 권고 목록으로만 둔다
     status = "통과" if not citation_issues and not unverified else "검토 필요"
+    name_lines, name_rows = unsupported_name_summary(documents)
     return "\n".join([
         "# 생성물 근거 검증 보고서", "", f"- **검증 상태**: {status}",
         f"- **형식·범위가 유효한 출처 인용 수**: {valid} (그중 줄여 쓴 파일명을 입력 파일로 해석한 것 {abbreviated})",
         f"- **출처 검증 이슈 수**: {len(citation_issues)}",
         f"- **미확인 사실형 문장 수**: {len(unverified)}",
         f"- **출처 내용 대조 확인 권고 수**: {len(content_flags)}",
-        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}", "",
+        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}",
+        f"- **원문에 없는 명칭을 본문에 표시한 줄 수**: {name_lines}", "",
         UNSUPPORTED_SUMMARY_TITLE, "",
         "원문 어디에도 없는 단위 붙은 수치입니다. 지어낸 값일 수 있으니 심의 제출 전 근거를 찾거나 삭제하세요.", "",
-        *unsupported_number_summary(documents, number_marks or []), "", "## 출처 검증 이슈", "",
+        *unsupported_number_summary(documents, number_marks or []), "",
+        "## 검증 안 된 명칭 요약 (이름별)", "",
+        "따옴표로 든 사례·사업 이름에 원문에 없는 낱말이 있는 것입니다. 실제로 있는 사례인지 확인하거나 삭제하세요.", "",
+        *name_rows, "", "## 출처 검증 이슈", "",
         *(citation_issues or ["- 없음"]), "", "## 미확인 사실형 문장 (심의 제출 전 삭제·근거 보강 필요)", "",
         *(unverified or ["- 없음"]), "",
         "## 출처 내용 대조 확인 권고 (범위는 맞지만 인용 줄과 내용이 다를 수 있음)", "",
@@ -372,6 +448,9 @@ def build_validation_report(documents: Mapping[str, str],
         "- 원문에 없는 수치: LLM이 쓴 산출물의 단위 붙은 수치(%, 억 원, 명 등)가 입력 원문 어디에도 없으면 본문에 표시합니다. "
         "원문 값을 반올림한 수치와 0은 통과시키고, 표의 숫자만 있는 칸(가중치·점수)은 보지 않습니다. "
         "질의의 예시 목표치(\"예: 10% 절감\")도 표시되므로, 원문 근거가 아니라는 뜻으로 읽으세요.",
+        "- 원문에 없는 명칭: 따옴표로 든 구 중 '사업·파일럿·시스템·플랫폼·센터·서비스·프로젝트'로 끝나거나 영문 고유명이 든 것에서, "
+        "이름 끝말을 뺀 낱말이 원문에 없으면 표시합니다. 띄어쓰기·하이픈 차이는 무시합니다. "
+        "실제로 있는 외부 사례도 원문에 없으면 표시되므로, 원문 근거가 아니라는 뜻으로 읽으세요.",
         "- 의미적 진실성은 자동 확정하지 않으므로 심의 제출 전 원문 대조가 필요합니다.",
         "- `[확인 필요: ...]`는 미확인 사실을 정당화하지 않습니다. 구체 수치·기관·협약은 근거를 첨부하거나 삭제해야 합니다.",
     ])

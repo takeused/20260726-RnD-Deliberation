@@ -16,6 +16,7 @@ from rdagents.agents.schemas import (
 from rdagents.agents.utils.agent_utils import _setting, clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.agents.utils.structured import invoke_structured_model
+from rdagents.dataflows.output_validation import has_unsupported_claims
 
 _REPORT_SECTIONS = [
     ("tech_value_report", "기술 가치 분석"),
@@ -105,6 +106,11 @@ def create_question_extractor(llm):
         report = call.model
 
         if report is not None:
+            # 원문에 없는 수치·명칭을 전제로 한 질의는 맨 뒤로 (공개 전 기획보고서 실행에서 원문에 없는 민간 사례를 전제로 한
+            # 질의가 1번이 됐다). 빼지는 않는다: 심의기준 필수 질의일 수 있고, 표시를 보고 사람이 고치면 된다
+            flagged = has_unsupported_claims([q.question for q in report.questions], state.get("precheck_md", ""))
+            report.questions = [q for q, f in zip(report.questions, flagged) if not f] \
+                + [q for q, f in zip(report.questions, flagged) if f]
             questions_md = render_anticipated_questions(report)
             improvements_md = render_improvements(report)
             report_json = report.model_dump_json()
