@@ -109,8 +109,12 @@ def check_citation_content(claim_line: str, cited_text: str) -> list[str]:
 _NOT_LLM_TEXT = _CODE_GENERATED | {"12_실행관측성.md", "07b_예상질의.json"}
 UNSUPPORTED_NOTE = "⚠️[원문에 없는 수치: {}]"
 NAME_NOTE = "⚠️[원문에 없는 명칭: {}]"
+UNIT_NOTE = "⚠️[단위 환산 오류: {}]"
 _NUMBER_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)(.*)$")
-_MARK_RE = re.compile(r"\s*⚠️\[원문에 없는 (?:수치|명칭): [^\]]*\]")
+_MARK_RE = re.compile(r"\s*⚠️\[(?:원문에 없는 (?:수치|명칭)|단위 환산 오류): [^\]]*\]")
+# '4,500백만원(≈450억원)'처럼 산출물이 직접 바꿔 쓴 억원 값
+_CONVERSION_RE = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(천\s*만\s*원|백\s*만\s*원|천\s*원|만\s*원|조\s*원?)\s*"
+                            r"[(（]\s*(?:≈|=|약|~|∼)?\s*(\d[\d,]*(?:\.\d+)?)\s*억")
 _NAME_MARK_RE = re.compile(r"⚠️\[원문에 없는 명칭: ([^\]]*)\]")
 # 원문에 없는 사례·사업 이름. 공개 전 기획보고서 실행에서 원문에 없는 민간 '○○ 파일럿'이 공방·예상 질의 1번까지 갔다.
 # 따옴표 구를 다 보면 바꿔 쓴 문장·심의 용어가 대부분 걸리므로, 이름으로 끝나는 구와 영문 고유명만 본다
@@ -212,6 +216,26 @@ def unsupported_numbers(line: str, index: Mapping[str, list[float]]) -> list[str
     return out
 
 
+def wrong_conversions(line: str) -> list[str]:
+    """줄에서 백만원·조원 금액을 억원으로 잘못 바꿔 쓴 곳의 맞는 환산 ('4,500백만원 = 45억원').
+
+    분석가 LLM이 백만원 합계를 억원으로 10배 틀리게 바꾸고 총사업비와 불일치한다고 썼다. 바꾼 값 자체는 원문에 없는
+    수치로 표시됐지만, 읽는 사람이 어느 쪽이 맞는지 알 수 있게 맞는 값을 함께 보여준다.
+    """
+    from rdagents.dataflows.budget_check import UNIT_WON, eok
+
+    out = []
+    for m in _CONVERSION_RE.finditer(line):
+        unit = re.sub(r"\s", "", m.group(2))
+        unit = unit if unit.endswith("원") else unit + "원"
+        computed = float(m.group(1).replace(",", "")) * UNIT_WON[unit] / 1e8
+        written = m.group(3).replace(",", "")
+        decimals = len(written.split(".")[1]) if "." in written else 0
+        if abs(float(written) - computed) > max(0.5 * 10 ** -decimals, 0.01 * computed):
+            out.append(f"{m.group(1)}{unit} = {eok(computed * 1e8)}억원")
+    return out
+
+
 def _squash(text: str) -> str:
     """띄어쓰기·하이픈·가운뎃점 차이를 없앤 비교용 글 ('하천범람 예측플랫폼' = '하천 범람 예측 플랫폼')."""
     return re.sub(r"[\s\-·•ㆍ,./]", "", normalize_citation_text(text))
@@ -263,12 +287,14 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
         for i, line in enumerate(lines):
             missing = unsupported_numbers(line, index)
             names = unsupported_names(line, squashed_source)
-            if not missing and not names:
+            units = wrong_conversions(line)
+            if not missing and not names and not units:
                 continue
             if missing:
                 found.append((filename, i + 1, missing))
             note = " ".join([UNSUPPORTED_NOTE.format(", ".join(missing))] * bool(missing)
-                            + [NAME_NOTE.format(", ".join(names))] * bool(names))
+                            + [NAME_NOTE.format(", ".join(names))] * bool(names)
+                            + [UNIT_NOTE.format(", ".join(units))] * bool(units))
             stripped = line.rstrip()
             # 표 줄은 마지막 칸 안에 넣어야 표가 깨지지 않는다
             lines[i] = f"{stripped[:-1].rstrip()} {note} |" if stripped.endswith("|") else f"{stripped} {note}"

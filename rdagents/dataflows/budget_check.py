@@ -371,6 +371,51 @@ def check(lines: list[str]) -> Report:
     return rep
 
 
+# 억원이 아닌 본문 금액. '2조649억'처럼 뒤에 숫자가 이어지는 금액은 뺀다
+TEXT_MONEY = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(천\s*만\s*원|백\s*만\s*원|천\s*원|만\s*원|조\s*원?)(?!\s*\d)")
+
+
+def eok(x: float) -> str:
+    """원 단위 값을 억원 수치로 ('45', '25,000', '0.5')."""
+    return f"{x / 1e8:,.2f}".rstrip("0").rstrip(".")
+
+
+def eok_conversions(lines: list[str], limit: int = 15) -> list[str]:
+    """표 합계 행과 본문의 백만원·조원 금액을 억원으로 바꾼 줄들. 분석가에게 주어 직접 환산하지 않게 한다.
+
+    분석가 LLM이 '(단위: 백만원)' 표의 합계를 억원으로 10배 틀리게 바꾸고 총사업비와 불일치한다고 썼다.
+    표 합계를 먼저 둔다: 본문 순서대로 자르면 앞쪽 통계 금액이 목록을 채워 예산표 합계가 빠졌다.
+    """
+    tables: list[str] = []
+    for t in find_tables(lines):
+        for line_no, cells in t.rows:
+            if not TOTAL_LABEL.match(label_of(cells)):
+                continue
+            best = None
+            for c in range(1, min(len(t.header), len(cells))):
+                unit = t.col_unit(c)
+                value, _ = parse_cell(cells[c])
+                if unit in (None, "억원", "억") or not value or (best and value <= best[0]):
+                    continue
+                best = (value, re.sub(r"\*\*", "", cells[c]).strip(), unit)
+            if best:
+                value, raw, unit = best
+                tables.append(f"- L{line_no} {t.name} {label_of(cells)}: {raw}{unit} = {eok(value * UNIT_WON[unit])}억원")
+    texts: list[str] = []
+    seen: set[str] = set()
+    for i, line in enumerate(lines, 1):
+        if line.lstrip().startswith("|"):
+            continue
+        for m in TEXT_MONEY.finditer(line):
+            unit = re.sub(r"\s", "", m.group(2))
+            unit = unit if unit.endswith("원") else unit + "원"
+            amount = f"{m.group(1)}{unit} = {eok(float(m.group(1).replace(',', '')) * UNIT_WON[unit])}억원"
+            if amount not in seen:  # 같은 금액은 처음 나온 줄만
+                seen.add(amount)
+                texts.append(f"- L{i} {amount}")
+    return (tables + texts)[:limit]
+
+
 def question(f: Finding) -> str:
     return f"L{f.line} {f.where}: 적힌 값은 {f.stated}, 계산 값은 {f.computed}입니다. 어느 쪽이 맞습니까?"
 

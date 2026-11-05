@@ -287,6 +287,37 @@ def test_unsupported_case_names_are_marked(tmp_path):
     assert "| 해안도시 홍수경보 파일럿 | 1 | `02.md` |" in text
 
 
+def test_wrong_unit_conversions_are_marked(tmp_path):
+    """산출물이 '4,500백만원(≈450억원)'처럼 단위를 잘못 바꿔 쓰면 맞는 환산값을 줄 끝에 표시한다."""
+    from rdagents.dataflows.output_validation import UNIT_NOTE, mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 4,500백만원. 분야 예산 2.5조원.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="unit-marks")
+    docs = {"01c.md": "| 연차별 배분 | 합계 4,500 백만원(≈450 억원)로 총액과 불일치 |\n"   # 10배 틀림 -> 표시
+                      "총사업비 4,500백만원(=45억원)\n"                              # 맞음 -> 통과
+                      "분야 예산 2.5 조원(=2,500 억원) 대비 작다\n"}                  # 조 환산 틀림 -> 표시
+    marked, _ = mark_unsupported_numbers(docs)
+    lines = marked["01c.md"].splitlines()
+    assert UNIT_NOTE.format("4,500백만원 = 45억원") in lines[0] and lines[0].endswith(" |")
+    assert lines[1] == "총사업비 4,500백만원(=45억원)"
+    assert UNIT_NOTE.format("2.5조원 = 25,000억원") in lines[2]
+    assert mark_unsupported_numbers(marked)[0] == marked                 # 다시 돌려도 두 번 붙이지 않음
+
+
+def test_budget_tool_gives_code_unit_conversions(tmp_path):
+    """예산 도구는 원문의 백만원·조원 금액을 코드가 억원으로 바꾼 값을 함께 준다 (분석가가 직접 환산하지 않게)."""
+    from rdagents.dataflows.project_loader import get_budget_details, set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("# 예산\n\n(단위: 백만원)\n\n|구분|1차년도|합계|\n|---|---|---|\n|연구비|4,500|4,500|\n"
+                      "|합계|4,500|4,500|\n\n총사업비 4,500백만원\n", encoding="utf-8")
+    set_current_report(str(report), project_id="unit-tool")
+    text = get_budget_details.invoke({})
+    assert "## 코드 단위 환산" in text and "합계: 4,500백만원 = 45억원" in text
+
+
 def test_questions_on_unsupported_claims_go_last(monkeypatch, tmp_path):
     """예상 질의 문장에 원문에 없는 수치·명칭이 들어 있으면 목록 맨 뒤로 보낸다 (지어낸 전제로 시작하는 질의)."""
     from rdagents.agents.managers import question_extractor as qe

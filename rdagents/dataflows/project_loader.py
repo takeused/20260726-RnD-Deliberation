@@ -424,12 +424,20 @@ def get_budget_details() -> str:
     """예산 상세 정보(요청 예산, 기간, 민간 투자, 경제적 파급효과)를 조회합니다."""
     raw = _raw_report("예산 상세(총액, 연차별, 민간 투자)")
     if raw is not None:
+        from rdagents.dataflows.budget_check import eok_conversions
+
         facts = get_project_facts()
+        report_text, report_name = get_report_text_and_name()
+        conversions = eok_conversions(report_text.splitlines()) if report_text else []
+        units = ("## 코드 단위 환산 (1억원 = 100백만원, 1조원 = 10,000억원)\n"
+                 f"원문 {report_name}의 백만원·조원 금액을 코드가 억원으로 바꾼 값. 직접 환산하지 말고 이 값을 쓰세요.\n"
+                 + "\n".join(conversions) + "\n\n") if conversions else ""
         return (
             "## 코드 검증 예산 기준\n"
             f"- **총 요청 예산**: {_format_eok(facts.get('requested_budget_eok'))}억원\n"
             f"- **근거**: {facts.get('budget_source', '확인 필요')}\n"
             f"- **검증 상태**: {facts.get('budget_status', 'unverified')}\n\n"
+            + units
             + raw
         )
     d = _get_current()
