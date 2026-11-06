@@ -906,6 +906,29 @@ def test_tool_results_fit_budget_without_touching_state():
     assert all(len(m.content) == 2005 for m in msgs[1:])                     # 상태의 원본은 그대로
     assert sum(len(m.content) for m in fitted[1:]) < 2005 * 4 * 0.6
 
+
+def test_old_budget_result_keeps_code_sections():
+    """예산 도구를 먼저 불러도, 뒤 결과에 밀려 줄 때 맨 앞 '## 코드…' 절(예산표)은 절째로 남는다."""
+    from langchain_core.messages import ToolMessage
+
+    from rdagents.agents.utils.agent_utils import code_sections_prefix, fit_tool_messages
+
+    budget = ("## 코드 검증 예산 기준\n- 총 요청 예산: 100억원\n\n"
+              "## 코드가 찾은 예산표 (원문 그대로, 줄 번호)\n" + "- L10 | 1차년도 | 30 |\n" * 40 + "\n"
+              "## 코드 단위 환산\n" + "- 환산 값\n" * 300 + "\n"
+              "## 기획보고서 검색 결과\n" + "나" * 3000)
+    table_end = budget.index("## 코드 단위 환산")
+    assert code_sections_prefix(budget, 2000) == table_end      # 넘치는 환산 절은 빼고 절 경계에서
+    assert code_sections_prefix("## 기획보고서 검색 결과\n…", 2000) == 0
+
+    msgs = [ToolMessage(content=budget, tool_call_id="b")] + [
+        ToolMessage(content="다" * 1700, tool_call_id=f"t{i}") for i in range(2)
+    ]
+    fitted = fit_tool_messages(msgs, {"tool_result_char_budget": 3500})
+    assert fitted[0].content.startswith(budget[:table_end])     # 예산표 전체가 남음
+    assert "검색 결과" not in fitted[0].content and "요청 크기 예산" in fitted[0].content
+    assert fitted[1].content == msgs[1].content
+
 def test_analyst_tool_call_cap(monkeypatch):
     """도구 결과가 상한에 이르면 도구 없이(바인딩 안 함) 보고서 작성을 지시한다. 도구 호출·결과는 글로 펼친다.
     상태에 값이 없으면(설정 추가 전 체크포인트) 환경변수를 읽는다."""
