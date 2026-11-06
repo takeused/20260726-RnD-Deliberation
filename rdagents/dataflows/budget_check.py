@@ -416,6 +416,39 @@ def eok_conversions(lines: list[str], limit: int = 15) -> list[str]:
     return (tables + texts)[:limit]
 
 
+
+BUDGET_CONTEXT = re.compile(r"예산|사업비|연구비|소요액|비목|연차별")
+YEAR_HEADER = re.compile(r"(?:19|20)\d\d|\d\s*차\s*년도")
+
+
+def budget_tables(lines: list[str], char_limit: int = 1500) -> str:
+    """예산표를 원문 그대로(줄 번호 붙임) 돌려준다. 연차별 표를 먼저, 길면 char_limit에서 자른다.
+
+    예산 도구는 검색 청크를 돌려주는데, 연차별 예산표가 든 청크가 뒤쪽에 있으면 도구 결과 길이 상한에서 잘려
+    분석가가 '연차별 배분 미확인'이라고 썼다. 표 위치는 코드가 알므로 앞에 둔다.
+    예산표로 보는 것: 금액 단위가 있고, 위 5줄·머리칸·항목명에 예산·사업비·연구비·소요액·비목·연차별이 있는 표
+    (피해 통계표 제외). 연도가 첫 행인 표는 연도가 머리칸을 덮어 '예산'이 사라지므로 제목의 '연차별'로도 본다.
+    """
+    picked = []
+    for t in find_tables(lines):
+        if not any(t.col_unit(c) in UNIT_WON for c in range(1, len(t.header))):
+            continue
+        context = " ".join(lines[max(0, t.start - 6):t.start - 1] + t.header + [label_of(c) for _, c in t.rows])
+        if BUDGET_CONTEXT.search(context):
+            picked.append((not any(YEAR_HEADER.search(h) for h in t.header), t.start, t))
+    out: list[str] = []
+    used = 0
+    for _, _, t in sorted(picked, key=lambda x: x[:2]):
+        unit = t.col_unit(len(t.header) - 1) or t.unit
+        rows = [f"- L{t.start} {lines[t.start - 1].strip()}" + (f" (단위: {unit})" if unit else "")]
+        rows += [f"- L{n} {lines[n - 1].strip()}" for n, _ in t.rows]
+        for row in rows:
+            if used + len(row) + 1 > char_limit:
+                return "\n".join(out + ["(표가 길어 생략)"])
+            out.append(row)
+            used += len(row) + 1
+    return "\n".join(out)
+
 def question(f: Finding) -> str:
     return f"L{f.line} {f.where}: 적힌 값은 {f.stated}, 계산 값은 {f.computed}입니다. 어느 쪽이 맞습니까?"
 

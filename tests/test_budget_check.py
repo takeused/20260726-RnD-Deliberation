@@ -54,3 +54,30 @@ def test_eok_conversions_for_table_totals_and_text_amounts():
                                          "- L8 4,500백만원 = 45억원",
                                          "- L8 2.5조원 = 25,000억원"]
     assert bc.eok_conversions(["|구분|금액(억 원)|", "|---|---|", "|합계|45|"]) == []  # 이미 억원
+
+
+def test_budget_tables_come_first_and_skip_statistics():
+    """연차별 예산표는 분석가에게 원문 그대로 먼저 준다. 검색 청크 뒤쪽에 있으면 도구 결과 길이 상한에서 잘려
+    분석가가 '연차별 배분 미확인'이라고 썼다. 예산과 무관한 통계표는 넣지 않는다."""
+    lines = ["## 피해 현황", "(단위: 조원)", "", "|구분|2023|2024|", "|---|---|---|", "|피해액|1.2|1.5|", "",
+             "## 소요 예산", "(단위: 백만원)", "", "|비목|2027|2028|합계|", "|---|---|---|---|",
+             "|인건비|1,000|1,200|2,200|", "|장비비|500|300|800|", "|합계|1,500|1,500|3,000|"]
+    out = bc.budget_tables(lines)
+    assert out.startswith("- L11 |비목|2027|2028|합계|")
+    assert "- L15 |합계|1,500|1,500|3,000|" in out and "(단위: 백만원)" in out
+    assert "피해액" not in out
+
+
+def test_budget_tables_respect_char_limit():
+    rows = [f"|과제{i}|{i},000|{i},000|" for i in range(1, 60)]
+    lines = ["사업비 (단위: 백만원)", "|과제|2027|합계|", "|---|---|---|", *rows, "|합계|1|1|"]
+    out = bc.budget_tables(lines, char_limit=300)
+    assert len(out) <= 300 + 40 and out.rstrip().endswith("(표가 길어 생략)")
+
+
+def test_budget_tables_find_year_row_roadmap_by_caption():
+    """제목이 '연차별 …'이고 연도가 첫 행에 있는 표: 연도 행이 머리칸을 덮어 머리칸의 '예산'이 사라져도 예산표로 본다."""
+    lines = ["[표 1] 연차별 투자 계획 (단위: 백만원)", "", "|구분||연차별|예산|합계|", "|---|---|---|---|---|",
+             "||2027|2028|2029||", "|과제 A|100|200|300|600|", "|합계|100|200|300|600|"]
+    out = bc.budget_tables(lines)
+    assert out.startswith("- L3 ") and "- L7 |합계|100|200|300|600|" in out

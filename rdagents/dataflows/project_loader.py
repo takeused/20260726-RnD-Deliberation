@@ -424,7 +424,7 @@ def get_budget_details() -> str:
     """예산 상세 정보(요청 예산, 기간, 민간 투자, 경제적 파급효과)를 조회합니다."""
     raw = _raw_report("예산 상세(총액, 연차별, 민간 투자)")
     if raw is not None:
-        from rdagents.dataflows.budget_check import eok_conversions
+        from rdagents.dataflows.budget_check import budget_tables, eok_conversions
 
         facts = get_project_facts()
         report_text, report_name = get_report_text_and_name()
@@ -432,11 +432,15 @@ def get_budget_details() -> str:
         units = ("## 코드 단위 환산 (1억원 = 100백만원, 1조원 = 10,000억원)\n"
                  f"원문 {report_name}의 백만원·조원 금액을 코드가 억원으로 바꾼 값. 직접 환산하지 말고 이 값을 쓰세요.\n"
                  + "\n".join(conversions) + "\n\n") if conversions else ""
+        # 예산표 원문은 검색 청크보다 앞에: 뒤쪽 청크에 있으면 도구 결과 길이 상한에서 잘려 연차별 배분을 못 봤다
+        found = budget_tables(report_text.splitlines()) if report_text else ""
+        tables = ("## 코드가 찾은 예산표 (원문 그대로, 줄 번호)\n" + found + "\n\n") if found else ""
         return (
             "## 코드 검증 예산 기준\n"
             f"- **총 요청 예산**: {_format_eok(facts.get('requested_budget_eok'))}억원\n"
             f"- **근거**: {facts.get('budget_source', '확인 필요')}\n"
             f"- **검증 상태**: {facts.get('budget_status', 'unverified')}\n\n"
+            + tables  # 환산 목록(통계 금액이 많음)보다 앞에
             + units
             + raw
         )

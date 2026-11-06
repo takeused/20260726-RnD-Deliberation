@@ -121,6 +121,10 @@ _NAME_MARK_RE = re.compile(r"⚠️\[원문에 없는 명칭: ([^\]]*)\]")
 # 안쪽 따옴표에서 다시 시작한다 ("민간 기업이 ‘○○ 파일럿’ 등…"의 이름은 '○○ 파일럿')
 _QUOTED_RE = re.compile(r"[‘'“\"「]([^‘’'“”\"「」\n]{3,40})[’'”\"」]")
 _NAME_SUFFIX_RE = re.compile(r"(?:파일럿|시범사업|사업|프로젝트|플랫폼|시스템|센터|서비스)$")
+# 이름이 빠진 빈 따옴표 (‘’, ‘‘’). 공개 전 기획보고서 실행에서 위원장 의견의 빈 따옴표가 그대로 예상 질의가 됐다.
+# 연도 앞 ‘(‘24년)는 뒤에 글자가 오므로 걸리지 않는다
+_EMPTY_QUOTE_RE = re.compile(r"[‘“「][‘“]?\s*[’”」]")
+EMPTY_NAME = "(빈 따옴표)"
 _PROPER_LATIN_RE = re.compile(r"[A-Za-z]*[A-Z][A-Za-z]*[a-z][A-Za-z]*")
 
 
@@ -248,7 +252,7 @@ def unsupported_names(line: str, squashed_source: str) -> list[str]:
     부를 수 있으므로 끝말은 보지 않는다). 낱말마다 따로 보면 원문에 흩어진 낱말로 지어낸 이름이 통과했다.
     영문 고유명은 그 낱말이 원문에 있는지만 본다.
     """
-    out = []
+    out = [EMPTY_NAME] if _EMPTY_QUOTE_RE.search(line) else []
     for m in _QUOTED_RE.finditer(_CITATION_RE.sub("", line)):
         name = m.group(1).strip()
         core = re.sub(r"\([^)]*\)", "", name).strip()  # '○○시스템(영문 약칭)'의 괄호 설명은 뺀다

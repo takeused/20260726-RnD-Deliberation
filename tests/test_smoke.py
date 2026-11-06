@@ -316,6 +316,23 @@ def test_budget_tool_gives_code_unit_conversions(tmp_path):
     set_current_report(str(report), project_id="unit-tool")
     text = get_budget_details.invoke({})
     assert "## 코드 단위 환산" in text and "합계: 4,500백만원 = 45억원" in text
+    # 예산표 원문은 검색 청크보다 앞에 (도구 결과 길이 상한에 잘리지 않게)
+    assert "## 코드가 찾은 예산표" in text and text.index("|연구비|4,500|4,500|") < text.index("## 코드가 찾은 예산표") + 400
+
+
+def test_empty_quotes_are_marked_as_missing_name(tmp_path):
+    """이름이 빠진 빈 따옴표(‘’, ‘‘’)는 원문에 없는 명칭으로 표시한다.
+    공개 전 기획보고서 실행에서 위원장 의견의 빈 따옴표가 그대로 예상 질의가 됐다."""
+    from rdagents.dataflows.output_validation import NAME_NOTE, mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원. ‘24년 대비 증가.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="empty-quote")
+    docs = {"03.md": "‘’ 등 빠진 항목을 보완할 것\n‘‘’ 항목의 산정 근거는?\n‘24년 대비 증가한 이유는?\n"}
+    lines = mark_unsupported_numbers(docs)[0]["03.md"].splitlines()
+    assert NAME_NOTE.format("(빈 따옴표)") in lines[0] and NAME_NOTE.format("(빈 따옴표)") in lines[1]
+    assert "⚠️" not in lines[2]   # 연도 앞 ‘는 따옴표가 아님
 
 
 def test_questions_on_unsupported_claims_go_last(monkeypatch, tmp_path):
@@ -331,7 +348,8 @@ def test_questions_on_unsupported_claims_go_last(monkeypatch, tmp_path):
     model = _default_instance(ReviewPreparationReport)
     texts = ["민간의 ‘해안도시 홍수경보 파일럿’이 있는데 왜 정부가 해야 합니까?",
              "총사업비 120억 원의 비목별 근거는?",
-             "대응시간 30% 단축 근거는?"]
+             "대응시간 30% 단축 근거는?",
+             "‘‘’ 항목의 산정 근거는?"]
     model.questions = [q.model_copy(update={"question": t}) for q, t in zip(model.questions, texts)] \
         + model.questions[len(texts):]
     monkeypatch.setattr(qe, "invoke_structured_model", lambda *a, **k: StructuredCallResult(model))
@@ -339,7 +357,7 @@ def test_questions_on_unsupported_claims_go_last(monkeypatch, tmp_path):
     result = qe.create_question_extractor(None)(state)
     order = [q["question"] for q in json.loads(result["preparation_report_json"])["questions"]]
     assert order[0] == texts[1]
-    assert order[-2:] == [texts[0], texts[2]]                            # 지어낸 전제의 질의는 순서를 지켜 맨 뒤로
+    assert order[-3:] == [texts[0], texts[2], texts[3]]                  # 지어낸 전제·빈 이름의 질의는 순서를 지켜 맨 뒤로
     assert result["anticipated_questions_md"].index(texts[1]) < result["anticipated_questions_md"].index(texts[0])
 
 
