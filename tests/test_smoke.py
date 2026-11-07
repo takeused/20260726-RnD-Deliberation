@@ -1330,3 +1330,25 @@ if __name__ == "__main__":
     run_checkpoint_resume()
     run_question_verification()
     run_hearing_rehearsal()
+
+
+def test_defender_gets_length_limit_only_in_short_context_mode():
+    """짧은 문맥 모드(prompt_char_budget>0)에서만 발표자에게 길이 제한(표 금지)을 준다: 출력 상한에서 답이 잘렸다."""
+    from langchain_core.messages import AIMessage
+
+    from rdagents.agents.researchers.project_defender import create_project_defender
+    from rdagents.agents.utils.agent_utils import DEFENDER_SHORT_OUTPUT_NOTE
+
+    seen = []
+
+    class FakeLLM:
+        def invoke(self, prompt_val):
+            seen.append(prompt_val.to_string())
+            return AIMessage(content="1. 답변")
+
+    node = create_project_defender(FakeLLM())
+    debate = {"history": "", "examiner_history": "[심사위원 패널]: 근거는?", "defender_history": "", "count": 0}
+    for budget in (0, 6000):
+        node({"review_debate_state": dict(debate), "prompt_char_budget": budget})
+    assert DEFENDER_SHORT_OUTPUT_NOTE.strip() not in seen[0]
+    assert DEFENDER_SHORT_OUTPUT_NOTE.strip() in seen[1]

@@ -4,7 +4,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
+from rdagents.agents.utils.agent_utils import clip_text, defender_length_note, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 
 _REPORT_SECTIONS = [
@@ -32,6 +32,7 @@ def create_project_defender(llm):
             "가장 공들여 답변하세요.\n"
             + get_review_criteria()
             + get_language_instruction()
+            + defender_length_note(state)
         )
 
         prompt = ChatPromptTemplate.from_messages([
