@@ -1352,3 +1352,26 @@ def test_defender_gets_length_limit_only_in_short_context_mode():
         node({"review_debate_state": dict(debate), "prompt_char_budget": budget})
     assert DEFENDER_SHORT_OUTPUT_NOTE.strip() not in seen[0]
     assert DEFENDER_SHORT_OUTPUT_NOTE.strip() in seen[1]
+
+
+def test_defender_answer_marks_skipped_questions():
+    """패널 질의 ①…⑤ 중 답하지 않은 번호를 찾아 기록에 남긴다. 하위 목록 번호는 답으로 세지 않는다."""
+    from langchain_core.messages import AIMessage
+
+    from rdagents.agents.researchers.project_defender import create_project_defender, unanswered_questions
+
+    question = "① 필요성은? ② 기술 수준은? ③ 단가 근거는? ④ 시급성은? ⑤ 중복은?"
+    headings = "**1. 필요성**\n답.\n**2. 기술**\n1. 단계\n3. 단계\n4. 단계\n**5. 중복**\n답."
+    assert unanswered_questions(question, headings) == ["③", "④"]
+    assert unanswered_questions(question, "① 답 ② 답 ③ 답 ④ 답 ⑤ 답") == []
+    assert unanswered_questions(question, "1. 답\n2. 답\n3. 답") == ["④", "⑤"]
+    assert unanswered_questions("근거를 대 보세요.", "답") == []
+
+    class FakeLLM:
+        def invoke(self, prompt_val):
+            return AIMessage(content=headings)
+
+    debate = {"history": "", "examiner_history": "[심사위원 패널]: 지난 질의 ⑥\n[심사위원 패널]: " + question,
+              "defender_history": "", "count": 0}
+    out = create_project_defender(FakeLLM())({"review_debate_state": debate})
+    assert out["review_debate_state"]["defender_history"].rstrip().endswith("[답변 누락: 질의 ③, ④에 답하지 않음]")

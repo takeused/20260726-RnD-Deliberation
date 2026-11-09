@@ -2,6 +2,8 @@
 """실제 심의에서 사용자가 서게 될 자리를 재현한다. 방어에 실패하거나 '보완하겠다'고
 인정한 지점이 곧 예상 질의와 보완 권고의 원석이 된다."""
 
+import re
+
 from langchain_core.prompts import ChatPromptTemplate
 
 from rdagents.agents.utils.agent_utils import clip_text, defender_length_note, get_language_instruction, make_ai_message
@@ -15,6 +17,33 @@ _REPORT_SECTIONS = [
     ("feasibility_report", "수행체계 분석"),
     ("regulatory_report", "규제/윤리 검토"),
 ]
+
+
+CIRCLED = "①②③④⑤⑥⑦⑧⑨"
+_HEADING_NUMBER = re.compile(r"(?m)^\s*(?:#+\s*)?\*\*\s*(\d)\s*[.)]")   # **1. 제목** / ### **1.
+_LINE_NUMBER = re.compile(r"(?m)^\s*(\d)\s*[.)]")
+
+
+def latest_examiner_turn(examiner_history: str) -> str:
+    return examiner_history.rsplit("[심사위원 패널]:", 1)[-1]
+
+
+def unanswered_questions(question: str, answer: str) -> list[str]:
+    """패널 발언의 ①…⑨ 중 답변에 그 번호가 없는 것. 번호 없는 질의면 빈 목록.
+
+    답변이 ①…을 쓰면 그것만, 아니면 굵은 제목 번호('**1.')만, 그것도 없으면 줄 첫머리 번호('1.')를 본다.
+    한 답변 안의 하위 목록 번호('3. …')를 답한 질의로 세지 않기 위해서다.
+    """
+    asked = [c for c in CIRCLED if c in question]
+    answered = {c for c in CIRCLED if c in answer}
+    if not answered:
+        numbers = _HEADING_NUMBER.findall(answer) or _LINE_NUMBER.findall(answer)
+        answered = {CIRCLED[int(n) - 1] for n in numbers if n != "0"}
+    return [c for c in asked if c not in answered]
+
+
+def missing_answer_note(missing: list[str]) -> str:
+    return f"\n\n⚠️[답변 누락: 질의 {', '.join(missing)}에 답하지 않음]" if missing else ""
 
 
 def create_project_defender(llm):
@@ -57,7 +86,9 @@ def create_project_defender(llm):
         })
 
         response = llm.invoke(prompt_val)
-        new_content = response.content
+        # 길이 제한을 받자 질의를 건너뛴 답이 나왔다: 빠진 번호를 기록에 남겨 패널·판정이 보게 한다
+        latest = latest_examiner_turn(state["review_debate_state"]["examiner_history"])
+        new_content = response.content + missing_answer_note(unanswered_questions(latest, response.content))
 
         new_history = state["review_debate_state"]["history"] + f"\n[사업 발표자]: {new_content}\n"
         new_defender_history = (
