@@ -19,8 +19,15 @@ class AnalystExecutionPlan:
     specs: list[AnalystNodeSpec]
 
 
-# R&D 심의 6인 분석가 정의
+# R&D 심의 분석가 정의: 분야 기술전문가 3명(노드 하나) + 기능별 분석가 6명
 ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
+    "domain_experts": AnalystNodeSpec(
+        key="domain_experts",
+        agent_node="Domain Expert Panel",
+        clear_node="Msg Clear Domain Experts",
+        tool_node="tools_domain_experts",
+        report_key="domain_expert_report",
+    ),
     "tech_value": AnalystNodeSpec(
         key="tech_value",
         agent_node="Tech Value Analyst",

@@ -14,7 +14,7 @@ from rdagents.agents.utils.structured import invoke_structured_model
 
 
 _REPORT_KEYS = (
-    "tech_value_report", "tech_trend_report", "economic_report",
+    "domain_expert_report", "tech_value_report", "tech_trend_report", "economic_report",
     "policy_report", "feasibility_report", "regulatory_report",
 )
 

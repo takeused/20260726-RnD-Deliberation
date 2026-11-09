@@ -2,6 +2,7 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from rdagents.agents.auditors.common import AUDIT_RULES, audit_facts
 from rdagents.agents.utils.agent_utils import clip_text, get_language_instruction, make_ai_message
 
 
@@ -17,12 +18,14 @@ def create_neutral_auditor(llm):
             "적용 가능한 경우의 민간 매칭 비율 조정, 부처·중앙-지방 간 역할 조정 등 대안을 제시하세요.\n"
             "3. 어느 한쪽으로 치우치지 않는 냉철하고 균형 잡힌 어조를 유지하세요.\n"
             "4. 최종 심의위원장이 판단하기 쉽게 실현 가능한 최적의 예산 조율안을 권고하세요."
+            + AUDIT_RULES
             + get_language_instruction()
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
-            ("human", "다음은 예산 조정관의 1차 예산 조정안입니다:\n\n{budget_plan}\n\n"
+            ("human", "확인된 사실 (코드가 원문·쟁점 원장에서 확인):\n{facts}\n\n"
+                      "다음은 예산 조정관의 1차 예산 조정안입니다:\n\n{budget_plan}\n\n"
                       "적극 투자 및 재정 건전성 검토관들의 이전 발언 내역:\n{audit_history}\n\n"
                       "위 내용을 바탕으로 양측의 주장을 절충한 최적의 조율안을 제시해 주세요."),
         ])
@@ -30,7 +33,7 @@ def create_neutral_auditor(llm):
         budget_plan = state.get("budget_coordination_plan", "예산안 없음")
         audit_history = clip_text(state["audit_debate_state"]["history"], state) or "이전 발언이 없습니다."
 
-        prompt_val = prompt.invoke({"budget_plan": budget_plan, "audit_history": audit_history})
+        prompt_val = prompt.invoke({"facts": audit_facts(state), "budget_plan": budget_plan, "audit_history": audit_history})
         response = llm.invoke(prompt_val)
         new_content = response.content
 

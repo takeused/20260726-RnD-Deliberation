@@ -42,6 +42,7 @@ class ReviewAgentState(MessagesState):
     sender: Annotated[str, "메시지 발신 에이전트"]
 
     # 6개 분석가 보고서
+    domain_expert_report: Annotated[str, "분야 기술전문가 3명 검토 보고서"]
     tech_value_report: Annotated[str, "기술 가치 분석 보고서"]
     tech_trend_report: Annotated[str, "기술 트렌드/중복성 분석 보고서"]
     economic_report: Annotated[str, "경제/재무 타당성 보고서"]
@@ -74,6 +75,9 @@ class ReviewAgentState(MessagesState):
     question_bank: Annotated[str, "기출·전형 질의 참고 코퍼스"]
     precheck_md: Annotated[str, "기획보고서 사전 점검표 (규칙 기반)"]
     precheck_brief: Annotated[str, "사전 점검의 누락·근거 약함 요약 (에이전트 지시문용)"]
+    precheck_issues: Annotated[list[dict], "사전 점검 누락·근거 약함과 숫자 검산 불일치 (쟁점 원장에 들어갈 코드 쟁점)"]
+    issue_ledger: Annotated[list[dict], "쟁점 원장: 쟁점별 출처 검증·질의 위원·방어 결과"]
+    max_debate_issues: Annotated[int, "공방에 올릴 쟁점 수 상한"]
     project_type: Annotated[str, "사업 유형 (산업형·공공임무형·혼합형). 심의기준·평가 가중치·점검 항목을 정함"]
     prompt_char_budget: Annotated[int, "노드 입력 절단 예산 (문자 수, 0=무제한)"]
     tool_result_char_budget: Annotated[int, "분석가가 LLM에 보내는 도구 결과 총량 예산 (문자 수, 0=무제한)"]

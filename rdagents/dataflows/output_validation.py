@@ -200,6 +200,13 @@ def unsupported_numbers(line: str, index: Mapping[str, list[float]]) -> list[str
     return out
 
 
+def _ledger_counts(ledger_md: str) -> str:
+    """쟁점 원장 머리말의 개수 (코드가 센 값). 위원장·최종 승인이 '방어 실패 4건', '미상정 쟁점 9개'를 옮겨 적으면
+    원문엔 없지만 지어낸 수치도 아니다 (NDMI groq8: 이 개수에 표시가 붙었음)."""
+    head = " ".join(line for line in ledger_md.splitlines() if line.startswith(("- 쟁점 수", "- 방어 실패한")))
+    return " ".join(f"{n}개 {n}건" for n in re.findall(r"\d+", head))
+
+
 def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, str], list[tuple[str, int, list[str]]]]:
     """LLM이 쓴 산출물에서 입력 원문에 없는 수치가 든 줄 끝에 표시를 붙인다. (표시한 문서들, [(파일, 줄, 수치)]).
 
@@ -208,6 +215,7 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     """
     precheck = documents.get("00b_사전점검.md", "")
     computed = precheck.split("## 숫자 검산", 1)[1] if "## 숫자 검산" in precheck else ""
+    computed += "\n" + _ledger_counts(documents.get("02b_쟁점원장.md", ""))
     index = source_number_index(get_source_lines(), computed)
     marked, found = dict(documents), []
     if not index:
@@ -230,14 +238,14 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     return marked, found
 
 
-def mark_texts(texts: Mapping[str, str], precheck_md: str = "") -> dict[str, str]:
+def mark_texts(texts: Mapping[str, str], precheck_md: str = "", ledger_md: str = "") -> dict[str, str]:
     """심의 도중 노드가 쓴 글에 바로 표시를 붙인다 (다음 노드가 표시된 글을 읽게).
 
     groq5 실행에서 공방에서 처음 나온 '1,200억 원'이 4줄로 번졌다. 표시는 실행이 끝난 뒤에만 붙어서,
     뒤 노드들은 지어낸 수치를 앞 단계 산출물의 사실로 읽고 이어 썼다.
     """
     try:
-        marked, _ = mark_unsupported_numbers({"00b_사전점검.md": precheck_md, **texts})
+        marked, _ = mark_unsupported_numbers({"00b_사전점검.md": precheck_md, "02b_쟁점원장.md": ledger_md, **texts})
     except RuntimeError:
         return dict(texts)  # 원문이 설정되지 않음 (샘플 JSON 모드)
     return {key: marked[key] for key in texts}

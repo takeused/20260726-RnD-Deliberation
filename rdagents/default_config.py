@@ -10,10 +10,12 @@ _ENV_OVERRIDES = {
     "RDAGENTS_LLM_BACKEND_URL":      "backend_url",
     "RDAGENTS_OUTPUT_LANGUAGE":       "output_language",
     "RDAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
+    "RDAGENTS_MAX_DEBATE_ISSUES":    "max_debate_issues",
     "RDAGENTS_MAX_AUDIT_ROUNDS":     "max_audit_rounds",
     "RDAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "RDAGENTS_REVIEW_GATE":         "review_gate",
     "RDAGENTS_PROJECT_TYPE":        "project_type",
+    "RDAGENTS_HUMAN_REVIEW":        "human_review",
     "RDAGENTS_PROMPT_CHAR_BUDGET":  "prompt_char_budget",
     "RDAGENTS_TOOL_RESULT_CHAR_BUDGET": "tool_result_char_budget",
     "RDAGENTS_MAX_ANALYST_TOOL_CALLS": "max_analyst_tool_calls",
@@ -132,12 +134,16 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # 출력 언어
     "output_language": "Korean",
     # 토론 및 심의 설정
-    "max_debate_rounds": 2,    # 심사 공방 라운드 수 (패널 질의+발표자 방어 = 1라운드)
+    "max_debate_rounds": 2,    # (쟁점별 공방 이전 방식의 라운드 수. 지금은 max_debate_issues가 공방 길이를 정함)
+    # 공방에 올릴 쟁점 수 상한 (쟁점 하나 = 패널 질의 + 발표자 방어). 반드시 올릴 쟁점이 많으면 2개까지 늘어남
+    "max_debate_issues": 6,
+    # 공방 전에 정책 판단이 필요한 '상' 쟁점을 사람에게 묻는다 (LangGraph interrupt, 체크포인트 필요)
+    "human_review": False,
     "max_audit_rounds": 1,     # 재정 검토 토론 라운드 수
-    "max_recur_limit": 150,    # LangGraph 재귀 한도 (6인 분석가이므로 여유 확보)
-    # 선택할 분석가 목록
+    "max_recur_limit": 200,    # LangGraph 재귀 한도 (분석가 노드 7개·쟁점별 공방이므로 여유 확보)
+    # 선택할 분석가 목록: 분야 기술전문가 3명(노드 하나) + 기능별 분석가 6명
     "selected_analysts": (
-        "tech_value", "tech_trend", "economic",
+        "domain_experts", "tech_value", "tech_trend", "economic",
         "policy", "feasibility", "regulatory",
     ),
 })
