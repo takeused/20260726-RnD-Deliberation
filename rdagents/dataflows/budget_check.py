@@ -16,11 +16,13 @@ from dataclasses import dataclass, field
 
 UNIT_WON = {"원": 1, "천원": 1e3, "만원": 1e4, "백만원": 1e6, "천만원": 1e7, "억원": 1e8, "억": 1e8, "조원": 1e12, "조": 1e12}
 TOTAL_LABEL = re.compile(r"^(?:총\s*계|합\s*계|총\s*합\s*계|계|총액|전체)$")
-SUBTOTAL_LABEL = re.compile(r"소\s*계")
+SUBTOTAL_LABEL = re.compile(r"소\s*계|\S\s*합\s*계$")    # "소계", "내역 합계"처럼 앞에 이름이 붙은 합계
+RATE_LABEL = re.compile(r"증감|증가율|감소율|비율|비중|%")  # 증감률 행은 더하는 값이 아님
+YEAR = re.compile(r"^(?:19|20)\d\d$")
 RATIO_HEADER = re.compile(r"비율|비중|구성비|점유율|%")
 PRICE_HEADER, QTY_HEADER = re.compile(r"단가"), re.compile(r"수량|개수|인원|대수")
 AMOUNT_HEADER = re.compile(r"금액|소요액|예산|사업비|합계|계")
-CELL_NUMBER = re.compile(r"^([△▲-])?\s*(\d[\d,]*(?:\.\d+)?)\s*%?$")
+CELL_NUMBER = re.compile(r"^([△▲▼-])?\s*(\d[\d,]*(?:\.\d+)?)\s*%?$")
 
 # 본문 금액·수량: "2조649.9억 원", "5,872.5억 원", "12만 명", "40개소"
 AMT = r"(?:\d[\d,]*(?:\.\d+)?\s*조\s*)?\d[\d,]*(?:\.\d+)?\s*(?:천만|백만|억|만|천)?\s*(?:원|명|개소|개|건|톤|가구|ha)?"
@@ -50,6 +52,7 @@ class Table:
     header: list[str]
     rows: list[tuple[int, list[str]]]           # (줄 번호, 칸들)
     unit: str | None = None                     # "(단위: 백만원)" 같은 표 단위
+    grouped: bool = False                       # 두 단 머리칸 ('건수/금액'이 번갈아 나오는 아래 머리칸이 있음)
 
     def col_unit(self, c: int) -> str | None:
         """머리칸의 괄호 단위(예: '금액(억 원)')가 표 단위보다 우선."""
@@ -83,7 +86,7 @@ def parse_cell(text: str) -> tuple[float | None, int]:
     if not m:
         return None, 0
     digits = m.group(2).replace(",", "")
-    value = float(digits) * (-1 if m.group(1) else 1)
+    value = float(digits) * (-1 if m.group(1) in ("△", "▼", "-") else 1)  # ▲는 증가 (전에는 마이너스로 읽었음)
     return value, len(digits.split(".")[1]) if "." in digits else 0
 
 
@@ -110,8 +113,12 @@ def won(x: float) -> str:
 
 
 def split_row(line: str) -> list[str]:
-    """표 한 줄 -> 칸들 (굵게 표시 ** 와 줄바꿈 <br>은 지움)."""
-    return [re.sub(r"\*\*|<br>", " ", c).strip() for c in line.strip().strip("|").split("|")]
+    """표 한 줄 -> 칸들 (굵게 표시 ** 와 줄바꿈 <br>은 지움).
+    양 끝의 '|'는 하나씩만 뗀다. strip("|")은 '||800|…'의 빈 첫 칸까지 지워 칸이 한 칸씩 밀렸음"""
+    line = line.strip()
+    line = line[1:] if line.startswith("|") else line
+    line = line[:-1] if line.endswith("|") else line
+    return [re.sub(r"\*\*|<br>", " ", c).strip() for c in line.split("|")]
 
 
 def find_tables(lines: list[str]) -> list[Table]:
@@ -120,16 +127,25 @@ def find_tables(lines: list[str]) -> list[Table]:
         is_sep = i + 1 < len(lines) and re.fullmatch(r"\s*\|?\s*:?-{3,}.*", lines[i + 1] or "")
         if lines[i].lstrip().startswith("|") and is_sep:
             start, header = i + 1, split_row(lines[i])
-            rows, j = [], i + 2
+            rows, j, grouped = [], i + 2, False
             while j < len(lines) and lines[j].lstrip().startswith("|"):
                 cells = split_row(lines[j])
-                rows.append((j + 1, cells + [""] * (len(header) - len(cells))))
+                cells = cells + [""] * (len(header) - len(cells))
+                values = [x for x in cells[1:] if x]
+                if not cells[0] and len(values) >= 2 and all(YEAR.match(x) for x in values):
+                    # 연도가 머리칸이 아니라 첫 행에 있는 표 (머리칸이 병합돼 '과제명 및 연차별 예산'으로 쪼개짐)
+                    header = [y or h for h, y in zip(header, cells)]
+                elif not values or any(parse_cell(x)[0] is not None for x in values):
+                    rows.append((j + 1, cells))
+                elif not cells[0] and len(set(values)) < len(values):
+                    grouped = True  # 같은 이름이 되풀이되는 아래 머리칸 (건수·금액·건수·금액…)
+                # 숫자 칸이 하나도 없는 글자 행(병합된 과제명 줄)은 건너뜀. 남기면 그 열 전체가 숫자 열이 아니게 됨
                 j += 1
             above = lines[max(0, i - 5):i]
             unit = next((norm_unit(m.group(1)) for l in reversed(above) if (m := re.search(r"단위\s*[:：]\s*([^)]*)", l))), None)
             # 표 이름은 번호만 ("표 1.1"): 결과 표의 위치 칸이 길어지지 않게
             caption = next((m.group(0) for l in reversed(above) if (m := re.search(r"표\s*\d+(?:[.-]\d+)*", l))), "")
-            tables.append(Table(start, caption or f"L{start} 표", header, rows, unit))
+            tables.append(Table(start, caption or f"L{start} 표", header, rows, unit, grouped))
             i = j
         else:
             i += 1
@@ -186,9 +202,12 @@ def check_table(t: Table, rep: Report) -> None:
     # 2. 행 합계: 연차별 값을 더한 값 = '합계' 열 (단가·수량이 있는 표는 더하는 표가 아니라 건너뜀)
     total_col = next((c for c in amount_cols if TOTAL_LABEL.match(re.sub(r"\*\*", "", t.header[c]).strip())), None)
     multiplicative = any(PRICE_HEADER.search(h) or QTY_HEADER.search(h) for h in t.header)
-    if total_col and not multiplicative:
-        parts = [c for c in amount_cols if c < total_col]
+    if total_col and not multiplicative and not t.grouped:  # 두 단 머리칸은 쪼개진 '합|계'를 합계 열로 오인함
+        # 합계 열이 맨 앞이면 오른쪽 칸들이 항목 (전에는 왼쪽만 더해 '0개 열을 더한 값'으로 오탐)
+        parts = [c for c in amount_cols if c < total_col] or [c for c in amount_cols if c > total_col]
         for ln, cells in t.rows:
+            if not parts or RATE_LABEL.search(label_of(cells)):
+                continue
             parsed = [parse_cell(cells[c]) for c in parts]
             stated, d = parse_cell(cells[total_col])
             d = max([d] + [p[1] for p in parsed])
@@ -204,8 +223,10 @@ def check_table(t: Table, rep: Report) -> None:
         for c, c_off in col_off.items():
             if abs(r_off - c_off) < 1e-9:
                 cells = dict(t.rows)[ln]
+                # 합계 행 × 합계 열(모서리)은 그 칸이 '적힌 합계'라 고칠 방향이 반대
+                corner = total_row and ln == total_row[0] and c == total_col
                 rep.findings.append(Finding("원인 칸 추정", ln, f"{t.name} · {label_of(cells)} × {t.header[c]}",
-                                            cells[c], fmt(parse_cell(cells[c])[0] - r_off),
+                                            cells[c], fmt(parse_cell(cells[c])[0] + (r_off if corner else -r_off)),
                                             "행 합계와 열 합계가 같은 크기로 어긋남 -> 이 칸만 고치면 둘 다 맞음"))
 
     # 4. 단가 × 수량 = 금액
@@ -349,6 +370,84 @@ def check(lines: list[str]) -> Report:
     rep.findings.sort(key=lambda f: f.line)
     return rep
 
+
+# 억원이 아닌 본문 금액. '2조649억'처럼 뒤에 숫자가 이어지는 금액은 뺀다
+TEXT_MONEY = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(천\s*만\s*원|백\s*만\s*원|천\s*원|만\s*원|조\s*원?)(?!\s*\d)")
+
+
+def eok(x: float) -> str:
+    """원 단위 값을 억원 수치로 ('45', '25,000', '0.5')."""
+    return f"{x / 1e8:,.2f}".rstrip("0").rstrip(".")
+
+
+def eok_conversions(lines: list[str], limit: int = 15) -> list[str]:
+    """표 합계 행과 본문의 백만원·조원 금액을 억원으로 바꾼 줄들. 분석가에게 주어 직접 환산하지 않게 한다.
+
+    분석가 LLM이 '(단위: 백만원)' 표의 합계를 억원으로 10배 틀리게 바꾸고 총사업비와 불일치한다고 썼다.
+    표 합계를 먼저 둔다: 본문 순서대로 자르면 앞쪽 통계 금액이 목록을 채워 예산표 합계가 빠졌다.
+    """
+    tables: list[str] = []
+    for t in find_tables(lines):
+        for line_no, cells in t.rows:
+            if not TOTAL_LABEL.match(label_of(cells)):
+                continue
+            best = None
+            for c in range(1, min(len(t.header), len(cells))):
+                unit = t.col_unit(c)
+                value, _ = parse_cell(cells[c])
+                if unit in (None, "억원", "억") or not value or (best and value <= best[0]):
+                    continue
+                best = (value, re.sub(r"\*\*", "", cells[c]).strip(), unit)
+            if best:
+                value, raw, unit = best
+                tables.append(f"- L{line_no} {t.name} {label_of(cells)}: {raw}{unit} = {eok(value * UNIT_WON[unit])}억원")
+    texts: list[str] = []
+    seen: set[str] = set()
+    for i, line in enumerate(lines, 1):
+        if line.lstrip().startswith("|"):
+            continue
+        for m in TEXT_MONEY.finditer(line):
+            unit = re.sub(r"\s", "", m.group(2))
+            unit = unit if unit.endswith("원") else unit + "원"
+            amount = f"{m.group(1)}{unit} = {eok(float(m.group(1).replace(',', '')) * UNIT_WON[unit])}억원"
+            if amount not in seen:  # 같은 금액은 처음 나온 줄만
+                seen.add(amount)
+                texts.append(f"- L{i} {amount}")
+    return (tables + texts)[:limit]
+
+
+
+BUDGET_CONTEXT = re.compile(r"예산|사업비|연구비|소요액|비목|연차별")
+YEAR_HEADER = re.compile(r"(?:19|20)\d\d|\d\s*차\s*년도")
+
+
+def budget_tables(lines: list[str], char_limit: int = 1500) -> str:
+    """예산표를 원문 그대로(줄 번호 붙임) 돌려준다. 연차별 표를 먼저, 길면 char_limit에서 자른다.
+
+    예산 도구는 검색 청크를 돌려주는데, 연차별 예산표가 든 청크가 뒤쪽에 있으면 도구 결과 길이 상한에서 잘려
+    분석가가 '연차별 배분 미확인'이라고 썼다. 표 위치는 코드가 알므로 앞에 둔다.
+    예산표로 보는 것: 금액 단위가 있고, 위 5줄·머리칸·항목명에 예산·사업비·연구비·소요액·비목·연차별이 있는 표
+    (피해 통계표 제외). 연도가 첫 행인 표는 연도가 머리칸을 덮어 '예산'이 사라지므로 제목의 '연차별'로도 본다.
+    """
+    picked = []
+    for t in find_tables(lines):
+        if not any(t.col_unit(c) in UNIT_WON for c in range(1, len(t.header))):
+            continue
+        context = " ".join(lines[max(0, t.start - 6):t.start - 1] + t.header + [label_of(c) for _, c in t.rows])
+        if BUDGET_CONTEXT.search(context):
+            picked.append((not any(YEAR_HEADER.search(h) for h in t.header), t.start, t))
+    out: list[str] = []
+    used = 0
+    for _, _, t in sorted(picked, key=lambda x: x[:2]):
+        unit = t.col_unit(len(t.header) - 1) or t.unit
+        rows = [f"- L{t.start} {lines[t.start - 1].strip()}" + (f" (단위: {unit})" if unit else "")]
+        rows += [f"- L{n} {lines[n - 1].strip()}" for n, _ in t.rows]
+        for row in rows:
+            if used + len(row) + 1 > char_limit:
+                return "\n".join(out + ["(표가 길어 생략)"])
+            out.append(row)
+            used += len(row) + 1
+    return "\n".join(out)
 
 def question(f: Finding) -> str:
     return f"L{f.line} {f.where}: 적힌 값은 {f.stated}, 계산 값은 {f.computed}입니다. 어느 쪽이 맞습니까?"

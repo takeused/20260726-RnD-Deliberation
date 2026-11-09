@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from contextvars import ContextVar
@@ -244,17 +245,32 @@ def _raw_report(section_hint: str) -> str | None:
     return _render_search(context, section_hint)
 
 
+def _bm25_scores(texts: list[str], terms: set[str], k1: float = 1.2, b: float = 0.75) -> list[float]:
+    """조각별 BM25 점수: 드문 단어일수록 무겁게(idf), 같은 단어 반복은 포화(k1), 긴 조각은 보정(b).
+
+    전에는 질의 단어가 나온 횟수를 그냥 더해, 고정 질의 '기술 상세(TRL, 핵심기술)'가 'TRL'이 나오는 조각 대신
+    '기술'이 많은 조각 두 개를 매번 돌려줬다 (공개 전 기획보고서 실행: 분석가 모두가 같은 두 조각만 보고 분석이 쏠림).
+    """
+    if not texts:
+        return []
+    n, avg = len(texts), (sum(map(len, texts)) / len(texts)) or 1
+    idf = {t: math.log(1 + (n - (df := sum(t in x for x in texts)) + 0.5) / (df + 0.5)) for t in terms}
+    scores = []
+    for text in texts:
+        norm = k1 * (1 - b + b * len(text) / avg)
+        scores.append(sum(idf[t] * tf * (k1 + 1) / (tf + norm) for t in terms if (tf := text.count(t))))
+    return scores
+
+
 def _render_search(context: ProjectContext, section_hint: str) -> str:
-    """청크 인덱스에서 키워드 빈도 기반 상위 청크를 골라 출처와 함께 렌더링."""
+    """청크 인덱스에서 BM25 점수 상위 청크를 골라 출처와 함께 렌더링."""
     query_terms = {
         term.casefold()
         for term in re.findall(r"[0-9A-Za-z가-힣]{2,}", section_hint)
         if term not in {"관련", "내용", "정보", "상세"}
     }
-    ranked_all = sorted(
-        enumerate(context.chunks),
-        key=lambda item: (-sum(item[1].text.casefold().count(term) for term in query_terms), item[0]),
-    )
+    scores = _bm25_scores([chunk.text.casefold() for chunk in context.chunks], query_terms)
+    ranked_all = sorted(enumerate(context.chunks), key=lambda item: (-scores[item[0]], item[0]))
     ranked = []
     # 외부 근거가 있으면 기본 top-k 내에서 사업보고서와 외부근거를 모두 노출한다.
     kinds = {chunk.source_kind for chunk in context.chunks}
@@ -408,12 +424,24 @@ def get_budget_details() -> str:
     """예산 상세 정보(요청 예산, 기간, 민간 투자, 경제적 파급효과)를 조회합니다."""
     raw = _raw_report("예산 상세(총액, 연차별, 민간 투자)")
     if raw is not None:
+        from rdagents.dataflows.budget_check import budget_tables, eok_conversions
+
         facts = get_project_facts()
+        report_text, report_name = get_report_text_and_name()
+        conversions = eok_conversions(report_text.splitlines()) if report_text else []
+        units = ("## 코드 단위 환산 (1억원 = 100백만원, 1조원 = 10,000억원)\n"
+                 f"원문 {report_name}의 백만원·조원 금액을 코드가 억원으로 바꾼 값. 직접 환산하지 말고 이 값을 쓰세요.\n"
+                 + "\n".join(conversions) + "\n\n") if conversions else ""
+        # 예산표 원문은 검색 청크보다 앞에: 뒤쪽 청크에 있으면 도구 결과 길이 상한에서 잘려 연차별 배분을 못 봤다
+        found = budget_tables(report_text.splitlines()) if report_text else ""
+        tables = ("## 코드가 찾은 예산표 (원문 그대로, 줄 번호)\n" + found + "\n\n") if found else ""
         return (
             "## 코드 검증 예산 기준\n"
             f"- **총 요청 예산**: {_format_eok(facts.get('requested_budget_eok'))}억원\n"
             f"- **근거**: {facts.get('budget_source', '확인 필요')}\n"
             f"- **검증 상태**: {facts.get('budget_status', 'unverified')}\n\n"
+            + tables  # 환산 목록(통계 금액이 많음)보다 앞에
+            + units
             + raw
         )
     d = _get_current()

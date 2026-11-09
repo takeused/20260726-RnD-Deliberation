@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -78,10 +79,28 @@ def _tool_exchange_as_text(messages: list) -> list:
     return out
 
 
-def fit_tool_messages(messages: list, state: dict, min_keep: int = 300) -> list:
+CODE_SECTION = "## 코드"
+
+
+def code_sections_prefix(text: str, cap: int) -> int:
+    """맨 앞에 이어진 '## 코드…' 절(코드가 검증·추출한 값)의 끝 위치. 절 단위로 cap자까지만 센다."""
+    if not text.startswith(CODE_SECTION):
+        return 0
+    starts = [m.start() for m in re.finditer(r"^## ", text, flags=re.M)] + [len(text)]
+    end = 0
+    for a, b in zip(starts, starts[1:]):
+        if not text.startswith(CODE_SECTION, a) or b > cap:
+            break
+        end = b
+    return end
+
+
+def fit_tool_messages(messages: list, state: dict, min_keep: int = 300, code_keep: int = 2000) -> list:
     """LLM에 보낼 메시지의 도구 결과 총량을 tool_result_char_budget(0=무제한) 안으로 줄인다.
 
     최근 도구 결과부터 예산을 배정하고, 예산을 넘는 오래된 결과는 앞부분 min_keep자만 남긴다.
+    단 맨 앞의 '## 코드…' 절(검증 예산 기준, 코드가 찾은 예산표 등)은 code_keep자 안에서 절째로 남긴다:
+    예산 도구를 먼저 부르면 그 뒤 도구 결과에 밀려 예산표가 300자에서 잘렸다.
     상태(체크포인트)에 저장된 원본은 바꾸지 않고, 이번 호출에 보내는 사본만 줄인다.
     NDMI 보고서 실행에서 분석가가 도구를 4번 부르자 요청이 Groq 분당 한도(8,000토큰)를 넘었다(413).
     """
@@ -97,7 +116,7 @@ def fit_tool_messages(messages: list, state: dict, min_keep: int = 300) -> list:
         if used + len(text) <= budget:
             used += len(text)
             continue
-        keep = max(budget - used, min_keep)
+        keep = max(budget - used, min_keep, code_sections_prefix(text, code_keep))
         clipped = text[:keep] + f"\n…(앞선 도구 결과 {len(text) - keep:,}자 생략: 요청 크기 예산)"
         out[i] = m.model_copy(update={"content": clipped})
         used += len(clipped)
@@ -133,7 +152,10 @@ def get_language_instruction(language: str = "Korean") -> str:
         "- 미래 제출일·과거 실적·정책 시행일은 입력 근거가 있을 때만 구체적인 날짜로 쓰세요.\n"
         # 앞 노드의 글에는 실행 도중 '원문에 없는 수치' 표시가 붙는다 (groq5: 공방의 '1,200억 원'이 4줄로 번졌음)
         "- 앞 단계 산출물에서 '⚠️[원문에 없는 수치: …]'가 붙은 수치는 입력 원문에 없는 값입니다. "
-        "사실·근거로 옮겨 쓰지 말고, 다룰 때는 그 수치의 근거를 묻는 질의로만 쓰세요."
+        "사실·근거로 옮겨 쓰지 말고, 다룰 때는 그 수치의 근거를 묻는 질의로만 쓰세요.\n"
+        # 원문에 없는 사례 이름이 공방에서 예상 질의의 전제로까지 옮겨졌다 (공개 전 기획보고서 실행)
+        "- '⚠️[원문에 없는 명칭: …]'이 붙은 사례·사업 이름도 입력 원문에 없는 것입니다. "
+        "민간·해외에 이미 그런 사례가 있다는 전제로 주장하거나 질의하지 마세요."
     )
     if language.lower() == "korean":
         return grounding + "\n\n**중요: 모든 분석 보고서와 의견은 반드시 한국어로 작성해 주세요.**"

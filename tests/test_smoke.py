@@ -206,6 +206,21 @@ def test_table_unit_and_computed_values_are_not_marked(tmp_path):
     assert mark_unsupported_numbers({"07.md": "계산값 3.2%"})[1] == [("07.md", 1, ["3.2%"])]
 
 
+def test_row_label_units_and_triangle_cells_are_source_numbers(tmp_path):
+    """단위가 행 이름('올해(억원)', '증감률(%)')에만 있고 칸에 ▲가 붙은 표: 산출물이 '660억', '10.0%'로 옮겨 써도
+    원문 수치다 (공개 전 기획보고서 실행에서 표의 합계·증감률이 26줄씩 원문에 없는 수치로 표시됐음)."""
+    from rdagents.dataflows.output_validation import mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("|구분|합계|가 분야|나 분야|\n|---|---|---|---|\n"
+                      "|올해(억원)|660|110|550|\n|작년(억원)|600|100|500|\n|증감률(%)|▲10.0|▲10.0|▲10.0|\n",
+                      encoding="utf-8")
+    set_current_report(str(report), project_id="row-units")
+    _, found = mark_unsupported_numbers({"07.md": "올해 660억 원, 작년 600억, 증감률 10.0%, 신규 9.9%\n"})
+    assert found == [("07.md", 1, ["9.9%"])]
+
+
 def test_numbers_are_marked_as_nodes_write(tmp_path):
     """노드가 쓴 보고서·토론 글에 바로 표시를 붙여 뒤 노드가 표시된 글을 읽는다. 흐름 제어 값과 JSON 필드는 그대로."""
     from rdagents.dataflows.output_validation import UNSUPPORTED_NOTE
@@ -236,6 +251,114 @@ def test_numbers_are_marked_as_nodes_write(tmp_path):
     # 근거 원칙이 표시된 수치를 옮겨 쓰지 말라고 알린다
     from rdagents.agents.utils.agent_utils import get_language_instruction
     assert "⚠️[원문에 없는 수치: …]" in get_language_instruction()
+
+
+def test_unsupported_case_names_are_marked(tmp_path):
+    """따옴표로 든 사례·사업 이름에 원문에 없는 낱말이 있으면 수치처럼 줄 끝에 표시한다.
+    원문 이름을 띄어쓰기만 바꿔 쓴 것, 이름이 아닌 따옴표 구(바꿔 쓴 문장·심의 용어)는 통과."""
+    from rdagents.dataflows.output_validation import (
+        NAME_NOTE,
+        UNSUPPORTED_NOTE,
+        build_validation_report,
+        mark_unsupported_numbers,
+    )
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("본 사업은 하천 범람 예측 플랫폼을 개발한다. 기존 재난 대응 체계는 한계가 있다.\n",
+                      encoding="utf-8")
+    set_current_report(str(report), project_id="names")
+    docs = {"02.md": "“민간이 이미 ‘해안도시 홍수경보 파일럿’을 운영 중입니다.\n"   # 원문에 없는 사례 -> 표시 (겹친 따옴표)
+                     "본 사업의 '하천범람 예측플랫폼'은 독창적이다.\n"            # 띄어쓰기만 다름 -> 통과
+                     "“시장실패·고위험 투자”라는 논리는 약하다.\n"                 # 이름이 아닌 구 -> 통과
+                     "해외 “FloodSense” 사례(대응시간 30% 단축)와 비교\n"         # 영문 이름 + 수치
+                     "‘범람 대응 파일럿’과 ‘하천 범람 예측 사업’\n"}             # 원문 낱말을 이어 붙인 이름 -> 표시
+    marked, found = mark_unsupported_numbers(docs)
+    lines = marked["02.md"].splitlines()
+    assert lines[0].endswith(NAME_NOTE.format("해안도시 홍수경보 파일럿"))
+    assert lines[1] == "본 사업의 '하천범람 예측플랫폼'은 독창적이다."
+    assert lines[2] == "“시장실패·고위험 투자”라는 논리는 약하다."
+    assert lines[3].endswith(UNSUPPORTED_NOTE.format("30%") + " " + NAME_NOTE.format("FloodSense"))
+    assert lines[4].endswith(NAME_NOTE.format("범람 대응 파일럿"))       # 끝말만 다른 원문 이름('…사업')은 통과
+    assert found == [("02.md", 4, ["30%"])]                              # 수치 목록에는 수치만
+    assert mark_unsupported_numbers(marked)[0] == marked                 # 다시 돌려도 두 번 붙이지 않음
+    text = build_validation_report(marked, found)
+    assert "**원문에 없는 명칭을 본문에 표시한 줄 수**: 3" in text
+    assert "| 해안도시 홍수경보 파일럿 | 1 | `02.md` |" in text
+
+
+def test_wrong_unit_conversions_are_marked(tmp_path):
+    """산출물이 '4,500백만원(≈450억원)'처럼 단위를 잘못 바꿔 쓰면 맞는 환산값을 줄 끝에 표시한다."""
+    from rdagents.dataflows.output_validation import UNIT_NOTE, mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 4,500백만원. 분야 예산 2.5조원.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="unit-marks")
+    docs = {"01c.md": "| 연차별 배분 | 합계 4,500 백만원(≈450 억원)로 총액과 불일치 |\n"   # 10배 틀림 -> 표시
+                      "총사업비 4,500백만원(=45억원)\n"                              # 맞음 -> 통과
+                      "분야 예산 2.5 조원(=2,500 억원) 대비 작다\n"}                  # 조 환산 틀림 -> 표시
+    marked, _ = mark_unsupported_numbers(docs)
+    lines = marked["01c.md"].splitlines()
+    assert UNIT_NOTE.format("4,500백만원 = 45억원") in lines[0] and lines[0].endswith(" |")
+    assert lines[1] == "총사업비 4,500백만원(=45억원)"
+    assert UNIT_NOTE.format("2.5조원 = 25,000억원") in lines[2]
+    assert mark_unsupported_numbers(marked)[0] == marked                 # 다시 돌려도 두 번 붙이지 않음
+
+
+def test_budget_tool_gives_code_unit_conversions(tmp_path):
+    """예산 도구는 원문의 백만원·조원 금액을 코드가 억원으로 바꾼 값을 함께 준다 (분석가가 직접 환산하지 않게)."""
+    from rdagents.dataflows.project_loader import get_budget_details, set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("# 예산\n\n(단위: 백만원)\n\n|구분|1차년도|합계|\n|---|---|---|\n|연구비|4,500|4,500|\n"
+                      "|합계|4,500|4,500|\n\n총사업비 4,500백만원\n", encoding="utf-8")
+    set_current_report(str(report), project_id="unit-tool")
+    text = get_budget_details.invoke({})
+    assert "## 코드 단위 환산" in text and "합계: 4,500백만원 = 45억원" in text
+    # 예산표 원문은 검색 청크보다 앞에 (도구 결과 길이 상한에 잘리지 않게)
+    assert "## 코드가 찾은 예산표" in text and text.index("|연구비|4,500|4,500|") < text.index("## 코드가 찾은 예산표") + 400
+
+
+def test_empty_quotes_are_marked_as_missing_name(tmp_path):
+    """이름이 빠진 빈 따옴표(‘’, ‘‘’)는 원문에 없는 명칭으로 표시한다.
+    공개 전 기획보고서 실행에서 위원장 의견의 빈 따옴표가 그대로 예상 질의가 됐다."""
+    from rdagents.dataflows.output_validation import NAME_NOTE, mark_unsupported_numbers
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원. ‘24년 대비 증가.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="empty-quote")
+    docs = {"03.md": "‘’ 등 빠진 항목을 보완할 것\n‘‘’ 항목의 산정 근거는?\n‘24년 대비 증가한 이유는?\n"}
+    lines = mark_unsupported_numbers(docs)[0]["03.md"].splitlines()
+    assert NAME_NOTE.format("(빈 따옴표)") in lines[0] and NAME_NOTE.format("(빈 따옴표)") in lines[1]
+    assert "⚠️" not in lines[2]   # 연도 앞 ‘는 따옴표가 아님
+
+
+def test_questions_on_unsupported_claims_go_last(monkeypatch, tmp_path):
+    """예상 질의 문장에 원문에 없는 수치·명칭이 들어 있으면 목록 맨 뒤로 보낸다 (지어낸 전제로 시작하는 질의)."""
+    from rdagents.agents.managers import question_extractor as qe
+    from rdagents.agents.schemas import ReviewPreparationReport
+    from rdagents.agents.utils.structured import StructuredCallResult
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원. 하천 범람 예측 플랫폼.\n", encoding="utf-8")
+    set_current_report(str(report), project_id="question-order")
+    model = _default_instance(ReviewPreparationReport)
+    texts = ["민간의 ‘해안도시 홍수경보 파일럿’이 있는데 왜 정부가 해야 합니까?",
+             "총사업비 120억 원의 비목별 근거는?",
+             "대응시간 30% 단축 근거는?",
+             "‘‘’ 항목의 산정 근거는?"]
+    model.questions = [q.model_copy(update={"question": t}) for q, t in zip(model.questions, texts)] \
+        + model.questions[len(texts):]
+    monkeypatch.setattr(qe, "invoke_structured_model", lambda *a, **k: StructuredCallResult(model))
+    state = {"review_debate_state": {"history": ""}, "audit_debate_state": {"history": ""}, "precheck_md": ""}
+    result = qe.create_question_extractor(None)(state)
+    order = [q["question"] for q in json.loads(result["preparation_report_json"])["questions"]]
+    assert order[0] == texts[1]
+    assert order[-3:] == [texts[0], texts[2], texts[3]]                  # 지어낸 전제·빈 이름의 질의는 순서를 지켜 맨 뒤로
+    assert result["anticipated_questions_md"].index(texts[1]) < result["anticipated_questions_md"].index(texts[0])
 
 
 def test_million_won_amounts_match_eok_in_outputs(tmp_path):
@@ -496,6 +619,7 @@ def test_common_prompt_forbids_fabricated_evidence():
     assert "제공되지 않은 통계" in instruction
     assert "[확인 필요: 필요한 자료]" in instruction
     assert "사업보고서 주장" in instruction and "외부근거 확인" in instruction
+    assert "원문에 없는 명칭" in instruction
 
 
 def test_review_criteria_adapts_to_public_safety_projects():
@@ -848,6 +972,29 @@ def test_tool_results_fit_budget_without_touching_state():
     assert fitted[1].content.startswith("[결과0]")                           # 앞부분은 남김
     assert all(len(m.content) == 2005 for m in msgs[1:])                     # 상태의 원본은 그대로
     assert sum(len(m.content) for m in fitted[1:]) < 2005 * 4 * 0.6
+
+
+def test_old_budget_result_keeps_code_sections():
+    """예산 도구를 먼저 불러도, 뒤 결과에 밀려 줄 때 맨 앞 '## 코드…' 절(예산표)은 절째로 남는다."""
+    from langchain_core.messages import ToolMessage
+
+    from rdagents.agents.utils.agent_utils import code_sections_prefix, fit_tool_messages
+
+    budget = ("## 코드 검증 예산 기준\n- 총 요청 예산: 100억원\n\n"
+              "## 코드가 찾은 예산표 (원문 그대로, 줄 번호)\n" + "- L10 | 1차년도 | 30 |\n" * 40 + "\n"
+              "## 코드 단위 환산\n" + "- 환산 값\n" * 300 + "\n"
+              "## 기획보고서 검색 결과\n" + "나" * 3000)
+    table_end = budget.index("## 코드 단위 환산")
+    assert code_sections_prefix(budget, 2000) == table_end      # 넘치는 환산 절은 빼고 절 경계에서
+    assert code_sections_prefix("## 기획보고서 검색 결과\n…", 2000) == 0
+
+    msgs = [ToolMessage(content=budget, tool_call_id="b")] + [
+        ToolMessage(content="다" * 1700, tool_call_id=f"t{i}") for i in range(2)
+    ]
+    fitted = fit_tool_messages(msgs, {"tool_result_char_budget": 3500})
+    assert fitted[0].content.startswith(budget[:table_end])     # 예산표 전체가 남음
+    assert "검색 결과" not in fitted[0].content and "요청 크기 예산" in fitted[0].content
+    assert fitted[1].content == msgs[1].content
 
 def test_analyst_tool_call_cap(monkeypatch):
     """도구 결과가 상한에 이르면 도구 없이(바인딩 안 함) 보고서 작성을 지시한다. 도구 호출·결과는 글로 펼친다.

@@ -108,8 +108,24 @@ def check_citation_content(claim_line: str, cited_text: str) -> list[str]:
 # 원문에 없는 수치를 본문에 표시할 때 건너뛰는 파일: 코드가 만든 파일과 구조화 데이터
 _NOT_LLM_TEXT = _CODE_GENERATED | {"12_실행관측성.md", "07b_예상질의.json"}
 UNSUPPORTED_NOTE = "⚠️[원문에 없는 수치: {}]"
+NAME_NOTE = "⚠️[원문에 없는 명칭: {}]"
+UNIT_NOTE = "⚠️[단위 환산 오류: {}]"
 _NUMBER_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)(.*)$")
-_MARK_RE = re.compile(r"\s*⚠️\[원문에 없는 수치: [^\]]*\]")
+_MARK_RE = re.compile(r"\s*⚠️\[(?:원문에 없는 (?:수치|명칭)|단위 환산 오류): [^\]]*\]")
+# '4,500백만원(≈450억원)'처럼 산출물이 직접 바꿔 쓴 억원 값
+_CONVERSION_RE = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?)\s*(천\s*만\s*원|백\s*만\s*원|천\s*원|만\s*원|조\s*원?)\s*"
+                            r"[(（]\s*(?:≈|=|약|~|∼)?\s*(\d[\d,]*(?:\.\d+)?)\s*억")
+_NAME_MARK_RE = re.compile(r"⚠️\[원문에 없는 명칭: ([^\]]*)\]")
+# 원문에 없는 사례·사업 이름. 공개 전 기획보고서 실행에서 원문에 없는 민간 '○○ 파일럿'이 공방·예상 질의 1번까지 갔다.
+# 따옴표 구를 다 보면 바꿔 쓴 문장·심의 용어가 대부분 걸리므로, 이름으로 끝나는 구와 영문 고유명만 본다
+# 안쪽 따옴표에서 다시 시작한다 ("민간 기업이 ‘○○ 파일럿’ 등…"의 이름은 '○○ 파일럿')
+_QUOTED_RE = re.compile(r"[‘'“\"「]([^‘’'“”\"「」\n]{3,40})[’'”\"」]")
+_NAME_SUFFIX_RE = re.compile(r"(?:파일럿|시범사업|사업|프로젝트|플랫폼|시스템|센터|서비스)$")
+# 이름이 빠진 빈 따옴표 (‘’, ‘‘’). 공개 전 기획보고서 실행에서 위원장 의견의 빈 따옴표가 그대로 예상 질의가 됐다.
+# 연도 앞 ‘(‘24년)는 뒤에 글자가 오므로 걸리지 않는다
+_EMPTY_QUOTE_RE = re.compile(r"[‘“「][‘“]?\s*[’”」]")
+EMPTY_NAME = "(빈 따옴표)"
+_PROPER_LATIN_RE = re.compile(r"[A-Za-z]*[A-Z][A-Za-z]*[a-z][A-Za-z]*")
 
 
 def _split_number(token: str) -> tuple[float, int, str]:
@@ -153,17 +169,21 @@ def _table_numbers(lines: list[str]) -> set[str]:
 
     out: set[str] = set()
     for table in budget_check.find_tables(lines):
-        for c in range(1, len(table.header)):
-            unit = "%" if budget_check.RATIO_HEADER.search(table.header[c]) else (table.col_unit(c) or "")
-            if not unit:
-                continue
-            for _, cells in table.rows:
-                cell = re.sub(r"\*\*|<br>|%", "", cells[c]).strip()
+        for _, cells in table.rows:
+            # 단위가 행 이름에만 있는 표 ('올해(억원)', '증감률(%)')도 있다 (공개 전 기획보고서의 유형별 예산 표)
+            label = cells[0]
+            m = re.search(r"\(([^)]*)\)", label)
+            row_unit = "%" if "%" in label else (budget_check.norm_unit(m.group(1)) if m else None)
+            for c in range(1, len(table.header)):
+                col_unit = "%" if budget_check.RATIO_HEADER.search(table.header[c]) else table.col_unit(c)
+                # 칸 앞의 ▲·▼·△(증감 표시)는 떼고 숫자만 본다
+                cell = re.sub(r"\*\*|<br>|%|^[▲▼△]", "", cells[c].strip()).strip()
                 if not re.fullmatch(r"\d[\d,]*(?:\.\d+)?", cell):
                     continue
-                if unit in budget_check.UNIT_WON:  # 금액 열은 억·조로 바꿔 둔다 ('총사업비(백만원)' 열의 4,500)
-                    out |= _money_tokens(float(cell.replace(",", "")) * budget_check.UNIT_WON[unit])
-                out |= _numbers(cell + unit)
+                for unit in {u for u in (col_unit, row_unit) if u}:
+                    if unit in budget_check.UNIT_WON:  # 금액 열은 억·조로 바꿔 둔다 ('총사업비(백만원)' 열의 4,500)
+                        out |= _money_tokens(float(cell.replace(",", "")) * budget_check.UNIT_WON[unit])
+                    out |= _numbers(cell + unit)
     return out
 
 
@@ -200,6 +220,55 @@ def unsupported_numbers(line: str, index: Mapping[str, list[float]]) -> list[str
     return out
 
 
+def wrong_conversions(line: str) -> list[str]:
+    """줄에서 백만원·조원 금액을 억원으로 잘못 바꿔 쓴 곳의 맞는 환산 ('4,500백만원 = 45억원').
+
+    분석가 LLM이 백만원 합계를 억원으로 10배 틀리게 바꾸고 총사업비와 불일치한다고 썼다. 바꾼 값 자체는 원문에 없는
+    수치로 표시됐지만, 읽는 사람이 어느 쪽이 맞는지 알 수 있게 맞는 값을 함께 보여준다.
+    """
+    from rdagents.dataflows.budget_check import UNIT_WON, eok
+
+    out = []
+    for m in _CONVERSION_RE.finditer(line):
+        unit = re.sub(r"\s", "", m.group(2))
+        unit = unit if unit.endswith("원") else unit + "원"
+        computed = float(m.group(1).replace(",", "")) * UNIT_WON[unit] / 1e8
+        written = m.group(3).replace(",", "")
+        decimals = len(written.split(".")[1]) if "." in written else 0
+        if abs(float(written) - computed) > max(0.5 * 10 ** -decimals, 0.01 * computed):
+            out.append(f"{m.group(1)}{unit} = {eok(computed * 1e8)}억원")
+    return out
+
+
+def _squash(text: str) -> str:
+    """띄어쓰기·하이픈·가운뎃점 차이를 없앤 비교용 글 ('하천범람 예측플랫폼' = '하천 범람 예측 플랫폼')."""
+    return re.sub(r"[\s\-·•ㆍ,./]", "", normalize_citation_text(text))
+
+
+def unsupported_names(line: str, squashed_source: str) -> list[str]:
+    """따옴표로 든 사례·사업 이름 중 원문에 없는 것.
+
+    '○○ 사업'·'○○ 시스템'은 끝말을 뺀 앞부분이 원문에 이어서 나와야 한다 (원문이 같은 대상을 '플랫폼' 대신 '사업'으로
+    부를 수 있으므로 끝말은 보지 않는다). 낱말마다 따로 보면 원문에 흩어진 낱말로 지어낸 이름이 통과했다.
+    영문 고유명은 그 낱말이 원문에 있는지만 본다.
+    """
+    out = [EMPTY_NAME] if _EMPTY_QUOTE_RE.search(line) else []
+    for m in _QUOTED_RE.finditer(_CITATION_RE.sub("", line)):
+        name = m.group(1).strip()
+        core = re.sub(r"\([^)]*\)", "", name).strip()  # '○○시스템(영문 약칭)'의 괄호 설명은 뺀다
+        if _squash(core) in squashed_source:
+            continue
+        suffix = _NAME_SUFFIX_RE.search(core)
+        if suffix:
+            stem = _squash(core[:suffix.start()])
+            missing = bool(stem) and stem not in squashed_source
+        else:
+            missing = any(_squash(w) not in squashed_source for w in _PROPER_LATIN_RE.findall(core))
+        if missing and name not in out:
+            out.append(name)
+    return out
+
+
 def _ledger_counts(ledger_md: str) -> str:
     """쟁점 원장 머리말의 개수 (코드가 센 값). 위원장·최종 승인이 '방어 실패 4건', '미상정 쟁점 9개'를 옮겨 적으면
     원문엔 없지만 지어낸 수치도 아니다 (NDMI groq8: 이 개수에 표시가 붙었음)."""
@@ -216,9 +285,11 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
     precheck = documents.get("00b_사전점검.md", "")
     computed = precheck.split("## 숫자 검산", 1)[1] if "## 숫자 검산" in precheck else ""
     computed += "\n" + _ledger_counts(documents.get("02b_쟁점원장.md", ""))
-    index = source_number_index(get_source_lines(), computed)
+    source_lines = get_source_lines()
+    index = source_number_index(source_lines, computed)
+    squashed_source = _squash("\n".join("\n".join(lines) for lines in source_lines.values()))
     marked, found = dict(documents), []
-    if not index:
+    if not source_lines:
         return marked, found  # 원문 모드가 아니면(샘플 JSON) 대조할 원문이 없음
     for filename, content in documents.items():
         if filename in _NOT_LLM_TEXT:
@@ -227,10 +298,15 @@ def mark_unsupported_numbers(documents: Mapping[str, str]) -> tuple[dict[str, st
         lines = [_MARK_RE.sub("", line) for line in content.splitlines()]
         for i, line in enumerate(lines):
             missing = unsupported_numbers(line, index)
-            if not missing:
+            names = unsupported_names(line, squashed_source)
+            units = wrong_conversions(line)
+            if not missing and not names and not units:
                 continue
-            found.append((filename, i + 1, missing))
-            note = UNSUPPORTED_NOTE.format(", ".join(missing))
+            if missing:
+                found.append((filename, i + 1, missing))
+            note = " ".join([UNSUPPORTED_NOTE.format(", ".join(missing))] * bool(missing)
+                            + [NAME_NOTE.format(", ".join(names))] * bool(names)
+                            + [UNIT_NOTE.format(", ".join(units))] * bool(units))
             stripped = line.rstrip()
             # 표 줄은 마지막 칸 안에 넣어야 표가 깨지지 않는다
             lines[i] = f"{stripped[:-1].rstrip()} {note} |" if stripped.endswith("|") else f"{stripped} {note}"
@@ -252,6 +328,35 @@ def mark_texts(texts: Mapping[str, str], precheck_md: str = "", ledger_md: str =
 
 
 UNSUPPORTED_SUMMARY_TITLE = "## 검증 안 된 수치 요약 (수치별)"
+
+
+def has_unsupported_claims(texts: list[str], precheck_md: str = "") -> list[bool]:
+    """글마다 원문에 없는 수치·명칭이 들어 있는지 (이미 붙은 표시도 포함). 원문이 없으면(샘플 JSON) 모두 False."""
+    try:
+        marked, _ = mark_unsupported_numbers(
+            {"00b_사전점검.md": precheck_md, **{f"{i}.txt": t for i, t in enumerate(texts)}})
+    except RuntimeError:
+        return [False] * len(texts)
+    return [bool(_MARK_RE.search(marked[f"{i}.txt"])) for i in range(len(texts))]
+
+
+def unsupported_name_summary(documents: Mapping[str, str]) -> tuple[int, list[str]]:
+    """본문에 붙은 '원문에 없는 명칭' 표시를 이름별로 묶는다. (표시한 줄 수, 표)."""
+    groups: dict[str, list[str]] = {}
+    marked_lines = 0
+    for filename, content in documents.items():
+        for line in content.splitlines():
+            names = [n.strip() for m in _NAME_MARK_RE.finditer(line) for n in m.group(1).split(", ")]
+            marked_lines += bool(names)
+            for name in names:
+                groups.setdefault(name, []).append(filename)
+    if not groups:
+        return 0, ["- 없음"]
+    rows = ["| 명칭 | 나온 줄 수 | 문서 |", "|---|---:|---|"]
+    for name in sorted(groups, key=lambda n: -len(groups[n])):
+        files = ", ".join(dict.fromkeys(f"`{f}`" for f in groups[name]))
+        rows.append(f"| {name} | {len(groups[name])} | {files} |")
+    return marked_lines, rows
 
 
 def _excerpt(line: str, token: str, width: int = 70) -> str:
@@ -351,16 +456,21 @@ def build_validation_report(documents: Mapping[str, str],
                         )
     # 내용 대조는 경험적 검사라 상태(통과/검토 필요)를 바꾸지 않고 확인 권고 목록으로만 둔다
     status = "통과" if not citation_issues and not unverified else "검토 필요"
+    name_lines, name_rows = unsupported_name_summary(documents)
     return "\n".join([
         "# 생성물 근거 검증 보고서", "", f"- **검증 상태**: {status}",
         f"- **형식·범위가 유효한 출처 인용 수**: {valid} (그중 줄여 쓴 파일명을 입력 파일로 해석한 것 {abbreviated})",
         f"- **출처 검증 이슈 수**: {len(citation_issues)}",
         f"- **미확인 사실형 문장 수**: {len(unverified)}",
         f"- **출처 내용 대조 확인 권고 수**: {len(content_flags)}",
-        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}", "",
+        f"- **원문에 없는 수치를 본문에 표시한 줄 수**: {len(number_marks or [])}",
+        f"- **원문에 없는 명칭을 본문에 표시한 줄 수**: {name_lines}", "",
         UNSUPPORTED_SUMMARY_TITLE, "",
         "원문 어디에도 없는 단위 붙은 수치입니다. 지어낸 값일 수 있으니 심의 제출 전 근거를 찾거나 삭제하세요.", "",
-        *unsupported_number_summary(documents, number_marks or []), "", "## 출처 검증 이슈", "",
+        *unsupported_number_summary(documents, number_marks or []), "",
+        "## 검증 안 된 명칭 요약 (이름별)", "",
+        "따옴표로 든 사례·사업 이름에 원문에 없는 낱말이 있는 것입니다. 실제로 있는 사례인지 확인하거나 삭제하세요.", "",
+        *name_rows, "", "## 출처 검증 이슈", "",
         *(citation_issues or ["- 없음"]), "", "## 미확인 사실형 문장 (심의 제출 전 삭제·근거 보강 필요)", "",
         *(unverified or ["- 없음"]), "",
         "## 출처 내용 대조 확인 권고 (범위는 맞지만 인용 줄과 내용이 다를 수 있음)", "",
@@ -376,6 +486,9 @@ def build_validation_report(documents: Mapping[str, str],
         "- 원문에 없는 수치: LLM이 쓴 산출물의 단위 붙은 수치(%, 억 원, 명 등)가 입력 원문 어디에도 없으면 본문에 표시합니다. "
         "원문 값을 반올림한 수치와 0은 통과시키고, 표의 숫자만 있는 칸(가중치·점수)은 보지 않습니다. "
         "질의의 예시 목표치(\"예: 10% 절감\")도 표시되므로, 원문 근거가 아니라는 뜻으로 읽으세요.",
+        "- 원문에 없는 명칭: 따옴표로 든 구 중 '사업·파일럿·시스템·플랫폼·센터·서비스·프로젝트'로 끝나거나 영문 고유명이 든 것에서, "
+        "이름 끝말을 뺀 낱말이 원문에 없으면 표시합니다. 띄어쓰기·하이픈 차이는 무시합니다. "
+        "실제로 있는 외부 사례도 원문에 없으면 표시되므로, 원문 근거가 아니라는 뜻으로 읽으세요.",
         "- 의미적 진실성은 자동 확정하지 않으므로 심의 제출 전 원문 대조가 필요합니다.",
         "- `[확인 필요: ...]`는 미확인 사실을 정당화하지 않습니다. 구체 수치·기관·협약은 근거를 첨부하거나 삭제해야 합니다.",
     ])
