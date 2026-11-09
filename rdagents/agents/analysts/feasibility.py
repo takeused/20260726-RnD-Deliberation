@@ -22,7 +22,7 @@ def create_feasibility_analyst(llm):
             "5. **연구팀 안정성**: 핵심 연구인력의 이탈 리스크는 없는가? 후속 인력 양성 계획은?\n"
             "6. **기관 간 협력 체계**: 공동연구기관 간 역할 분담과 협력 체계가 명확한가?\n\n"
             "반드시 구체적인 근거를 기반으로 분석하고, Markdown 표로 핵심 결과를 정리하세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

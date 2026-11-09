@@ -49,21 +49,6 @@ def analyst_length_note(state: dict) -> str:
     return ANALYST_SHORT_OUTPUT_NOTE if _setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET") else ""
 
 
-# 발표자도 같은 이유로: 표를 곁들인 긴 답변이 출력 상한에서 잘려 뒤쪽 질의에 대한 답이 빠졌다.
-# 잘린 답변이 그대로 방어 판정과 심사공방 기록에 들어가므로 표를 빼고 질의당 길이를 정한다.
-# 길이만 정하자 질의 5개 중 2개를 건너뛰고 답한 실행이 있어, 줄일 것은 문장이지 질의가 아니라고 못박는다
-DEFENDER_SHORT_OUTPUT_NOTE = (
-    "\n\n**출력 길이 제한 (짧은 문맥 모드)**: 답변은 전체 2,000자 이내로 쓰세요. "
-    "패널의 질의 하나하나에 그 번호(①, ② …)를 달아 **하나도 빠짐없이** 답하고, 질의당 2~3문장으로 쓰세요. "
-    "분량이 모자라면 질의마다 문장을 줄이고, 질의를 건너뛰지 마세요. "
-    "표는 쓰지 말고, 앞선 답변을 되풀이하지 마세요 (길면 출력 상한에서 잘려 뒤쪽 질의에 대한 답이 빠집니다)."
-)
-
-
-def defender_length_note(state: dict) -> str:
-    return DEFENDER_SHORT_OUTPUT_NOTE if _setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET") else ""
-
-
 def bind_analyst_tools(llm, tools: list, state: dict):
     """(바인딩된 모델, 보낼 메시지). 도구 호출이 상한에 이르면 도구 없이 보고서 작성을 지시한다.
 

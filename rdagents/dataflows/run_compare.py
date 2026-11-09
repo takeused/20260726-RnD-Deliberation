@@ -60,6 +60,7 @@ def collect(run_dir: str) -> dict[str, object]:
                     if any(t in line for t in table_ids)) if table_ids else 0
 
     decision = re.search(r"\*\*최종 심의 결정\*\*:\s*(\S+)", _read(run, "06_최종결정.md"))
+    ledger = re.search(r"- 쟁점 수 \d+: ([^\n⚠]+)", _read(run, "02b_쟁점원장.md"))
     return {
         "결정": decision.group(1) if decision else "?",
         "총 토큰": total,
@@ -79,6 +80,7 @@ def collect(run_dir: str) -> dict[str, object]:
         "예상 질의 심의기준": ", ".join(f"{k} {v}" for k, v in criteria.most_common()) or "-",
         "숫자 검산 불일치 (사전 점검)": int(mismatch.group(1)) if mismatch else None,
         "숫자 검산 표가 공방·질의에 언급된 줄": reflected,
+        "쟁점 원장 (공방 결과)": ledger.group(1).strip() if ledger else "-",
     }
 
 

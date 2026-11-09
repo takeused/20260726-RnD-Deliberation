@@ -487,6 +487,18 @@ def test_rerender_and_compare_runs(tmp_path):
     state, _ = graph.propagate(report_path=str(report_path), review_year="2027")
     graph.close()
     run = Path(state["saved_results_dir"])
+    # 사업 유형 판별이 상태·사전 점검 문서·정량 평가표·HTML까지 이어진다 (공공 키워드 1줄뿐이라 혼합형)
+    assert state["project_type"] == "혼합형"
+    assert (run / "00b_사전점검.md").read_text(encoding="utf-8").startswith("## 사업 유형 판별")
+    assert "- **사업 유형**: 혼합형" in (run / "09_정량평가표.md").read_text(encoding="utf-8")
+    assert "<dt>사업 유형</dt><dd>혼합형 (자동 판별)</dd>" in (run / "심의종합리포트.html").read_text(encoding="utf-8")
+    # 쟁점 원장: 파일로 남고 HTML 의결 요약과 실행 비교에 공방 결과가 나온다. 분야 기술전문가 보고서도 저장
+    assert (run / "02b_쟁점원장.md").read_text(encoding="utf-8").startswith("# 쟁점 원장")
+    html = (run / "심의종합리포트.html").read_text(encoding="utf-8")
+    assert re.search(r"쟁점 원장 \(코드 판정\)</strong><br>쟁점 수 \d+: 방어 성공 0 · 방어 실패 \d+ · 공방 미상정", html)
+    assert "⚠️" not in (run / "02b_쟁점원장.md").read_text(encoding="utf-8").split("| #")[0]   # 코드가 쓴 개수엔 표시 없음
+    assert collect(str(run))["쟁점 원장 (공방 결과)"].startswith("방어 성공 0 · 방어 실패")
+    assert (run / "01_분석_분야기술전문가.md").exists()
 
     before = collect(str(run))
     assert before["LLM 호출 수"] > 10                             # 가짜 응답의 예산 100.0억도 원문에 없어 표시됨
@@ -583,10 +595,21 @@ def test_quality_score_is_weighted_in_code():
         technical_feasibility=ScoreItem(score=40, confidence=80),
         economic_feasibility=ScoreItem(score=20, confidence=80),
         execution_capability=ScoreItem(score=0, confidence=80),
+        field_deployment=ScoreItem(score=50, confidence=80),
+        disaster_phase_fit=ScoreItem(score=90, confidence=80),
         overall_score=99,  # 모델 입력값은 코드 계산값으로 덮어써야 함
     )
-    assert report.overall_score == 59.0
+    # 유형을 모르면 혼합형 가중치: 20/20/15/15/10/10/10 (재난관리 단계 적합성은 쓰지 않음)
+    assert report.overall_score == 58.0
     assert report.overall_confidence == 80.0
+    from rdagents.agents.schemas import TYPE_QUALITY_WEIGHTS, apply_quality_weights, render_quality_scorecard
+    for weights in TYPE_QUALITY_WEIGHTS.values():
+        assert round(sum(w for _, w in weights.values()), 6) == 1.0
+    # 공공임무형: 정부지원 20, 공공가치 20, 시급성 15, 단계 적합성 10, 현장 적용 15, 실현가능성 8, 역량 7, 비용효과성 5
+    assert apply_quality_weights(report, "공공임무형").overall_score == 65.7
+    table = render_quality_scorecard(report, "공공임무형")
+    assert "| 현장 적용·확산 경로 | 15% |" in table and "| 비용효과성 | 5% |" in table
+    assert "재난관리 단계 적합성" not in render_quality_scorecard(report, "산업형")
 
 
 def test_common_prompt_forbids_fabricated_evidence():
@@ -602,11 +625,53 @@ def test_common_prompt_forbids_fabricated_evidence():
 def test_review_criteria_adapts_to_public_safety_projects():
     from rdagents.agents.utils.review_criteria import get_review_criteria
 
-    criteria = get_review_criteria()
-    assert "공공임무·사회문제 해결형" in criteria
-    assert "인명·재산 피해 저감" in criteria
-    assert "지역 안전격차" in criteria
-    assert "억지 B/C" in criteria
+    public = get_review_criteria("공공임무형")
+    assert "사업 유형: 공공임무형" in public
+    for phrase in ("인명·재산 피해 저감", "지역 간 안전격차", "억지 B/C", "재난관리 단계 적합성",
+                   "수요기관", "운영·유지관리 주체와 재원", "부처 간 역할 분담"):
+        assert phrase in public
+    industry = get_review_criteria("산업형")
+    assert "기술 주권" in industry and "재난관리 단계" not in industry
+    assert "사업 유형: 혼합형" in get_review_criteria() == get_review_criteria("혼합형")  # 유형을 모르면 혼합형
+
+
+def test_project_type_drives_precheck_and_required_questions(tmp_path):
+    """사업 유형을 규칙으로 판별해 사전 점검 항목과 필수 질의가 달라진다. --project-type이 판별보다 우선."""
+    import pytest
+
+    from rdagents.agents.schemas import CriterionTag, ReviewPreparationReport, require_type_questions
+    from rdagents.dataflows.plan_precheck import check_lines, checklist_for
+    from rdagents.dataflows.project_type import classify, render_section
+
+    public = {"a.md": ["## 추진 배경", "- 최근 5년 풍수해 인명 피해 증가, 재난 대응 공백", "- 소방 현장 대피 지원",
+                       "- 피해 저감 목표 20%"]}
+    industry = {"b.md": ["- 글로벌 시장 규모 10조 원, 수출 확대", "- 기술 이전과 사업화로 매출 창출"]}
+    assert classify(public).project_type == "공공임무형"
+    assert classify(industry).project_type == "산업형"
+    assert classify({**public, **industry}).project_type == "혼합형"
+    assert classify({}).project_type == "혼합형"                              # 판별할 원문 없음
+    forced = classify(public, override="산업형")
+    assert (forced.project_type, forced.decided_by) == ("산업형", "사용자 지정")
+    section = render_section(classify(public))
+    assert "- 판별: **공공임무형** (자동 판별)" in section and "[출처: a.md L2-L2]" in section
+
+    # 공공임무형·혼합형만 재난안전 점검 항목(수요기관·재난관리 단계·제도화·운영 재원)이 붙는다
+    assert len(checklist_for("산업형")) == 9 and len(checklist_for("공공임무형")) == 13
+    status = {r.item.key: r.status for r in check_lines(
+        ["- 수요기관: 시·도 재난안전대책본부 참여", "- 대응 단계의 상황 공유 공백", "- 운영 매뉴얼 개정 반영"],
+        checklist_for("공공임무형"))}
+    assert status["demand_agency"] == status["disaster_phase"] == status["institutionalize"] == "충족"
+    assert status["maintenance"] == "누락"
+
+    # 공공임무형은 '현장 적용·확산' 질의가 있어야 한다 (산업형은 없어도 통과)
+    from rdagents.dataflows.token_estimate import sample_instance
+    report = sample_instance(ReviewPreparationReport)
+    assert require_type_questions(report, "공공임무형") is report
+    without = report.model_copy(update={"questions": [q for q in report.questions if q.criterion != CriterionTag.FIELD]
+                                        + [report.questions[0]]})
+    with pytest.raises(ValueError, match="현장 적용·확산"):
+        require_type_questions(without, "공공임무형")
+    assert require_type_questions(without, "산업형") is without
 
 
 def test_protected_report_keeps_internal_navigation_unlocked():
@@ -721,11 +786,13 @@ def run_smoke():
     for key in report_keys:
         assert final_state.get(key), f"{key} 비어 있음"
 
-    # 2. 심사 공방: max_debate_rounds=2 → 발언 4회 (패널 2, 발표자 2)
+    # 2. 쟁점별 심사 공방: 가짜 쟁점 3개(정부지원·시급성 '상', 예산)는 모두 반드시 올릴 쟁점 → 발언 6회
     rds = final_state["review_debate_state"]
-    assert rds["count"] == 4, f"심사 공방 count={rds['count']}, 기대 4"
-    assert rds["history"].count("[심사위원 패널]") == 2
-    assert rds["history"].count("[사업 발표자]") == 2
+    ledger = final_state["issue_ledger"]
+    assert [i["status"] for i in ledger] == ["방어 실패"] * 3          # 가짜 발표자는 근거 없음을 인정
+    assert rds["count"] == 6, f"심사 공방 count={rds['count']}, 기대 6"
+    assert rds["history"].count("[심사위원 패널 · ") == 3 and rds["history"].count("[사업 발표자]") == 3
+    assert "재정위원" in rds["history"]                               # 예산 쟁점은 재정위원이 질의
 
     # 3. 재정 검토: max_audit_rounds=1 → 발언 3회 (Agg, Cons, Neut 각 1)
     ads = final_state["audit_debate_state"]
@@ -1055,10 +1122,22 @@ def test_plan_precheck_rules():
     status = {r.item.key: r.status for r in check_lines(other)}
     assert status["background"] == "충족" and status["goal_kpi"] == "충족"
 
+    # 근거 파일(--evidence)도 함께 본다: 주 보고서에 없고 근거 파일에만 있는 항목은 누락이 아니고, 근거 줄은 그 파일로 인용
+    from rdagents.dataflows.plan_precheck import precheck_issues
+    main_text = "## 사업 개요\n- 총 사업비 120억 원\n"
+    evidence = {"04_중복검토.md": "## 유사·중복 검토\n- 기존 사업과 차별화된다\n"}
+    alone = {r["issue"].split(" ")[0] for r in precheck_issues(main_text, "a.md")}
+    joined = precheck_issues(main_text, "a.md", evidence=evidence)
+    assert "기술" in alone and not any(i["issue"].startswith("기술 차별성") for i in joined)
+    full, _ = run_precheck(main_text, "a.md", evidence=evidence)
+    assert "+ 근거 파일 1개 (`04_중복검토.md`)" in full and "[출처: 04_중복검토.md L1-L1]" in full
 
-def test_panel_prompt_receives_precheck_brief():
-    """패널 지시문에 사전 점검 요약이 들어가고, 원문의 중괄호가 템플릿을 깨지 않는다."""
+
+def test_panel_asks_one_ledger_issue_and_stops_when_done():
+    """패널은 쟁점 원장에서 쟁점 하나를 골라 담당 위원으로 질의한다. 원문의 중괄호가 템플릿을 깨지 않고,
+    상정할 쟁점이 없으면 LLM을 부르지 않고 공방을 끝낸다."""
     from rdagents.agents.researchers.panel_examiner import create_panel_examiner
+    from rdagents.dataflows.issue_ledger import build_ledger
 
     seen = {}
 
@@ -1067,12 +1146,117 @@ def test_panel_prompt_receives_precheck_brief():
             seen["text"] = prompt_val.to_string()
             return AIMessage(content="[가짜 질의]")
 
-    node = create_panel_examiner(Capture())
-    node({
-        "precheck_brief": "- [시급성] 시급성의 정량 근거 — 근거 약함 {중괄호 포함 원문}",
-        "review_debate_state": {"examiner_history": "", "defender_history": "", "history": "", "count": 0},
-    })
-    assert "시급성의 정량 근거 — 근거 약함 {중괄호 포함 원문}" in seen["text"]
+    ledger = build_ledger([], [{"issue": "시급성의 정량 근거 근거 약함 {중괄호 포함 원문}", "criterion": "시급성",
+                                "severity": "중", "origin": "사전 점검 (근거 약함)", "cite": "", "quote": "",
+                                "verified": True, "verify_note": "코드 점검"}], "공공임무형")
+    debate = {"examiner_history": "", "defender_history": "", "history": "", "count": 0, "current_response": ""}
+    out = create_panel_examiner(Capture())({"issue_ledger": ledger, "project_type": "공공임무형",
+                                            "review_debate_state": debate})
+    assert "{중괄호 포함 원문}" in seen["text"] and "재난안전 정책위원" in seen["text"]
+    assert out["issue_ledger"][0]["status"] == "공방 중" and out["review_debate_state"]["current_response"] == "Examiner"
+    assert "[심사위원 패널 · 재난안전 정책위원] (쟁점 #1, 시급성" in out["review_debate_state"]["history"]
+    seen.clear()
+    done = create_panel_examiner(Capture())({"issue_ledger": [{**ledger[0], "status": "방어 실패"}],
+                                             "review_debate_state": debate})
+    assert done["review_debate_state"]["current_response"] == "Done" and not seen   # LLM 호출 없음
+
+
+def test_audit_team_reads_confirmed_facts_and_number_rules():
+    """재정 검토팀 3명은 코드가 확인한 사실(요청 예산·쟁점 원장)과 수치 규칙을 읽는다.
+    요청 예산을 원문에서 찾지 못했으면 금액·비율을 제시하지 말라고 알린다."""
+    from rdagents.agents.auditors import (
+        create_aggressive_auditor, create_conservative_auditor, create_neutral_auditor,
+    )
+    from rdagents.dataflows.issue_ledger import build_ledger
+
+    seen = []
+
+    class Capture:
+        def invoke(self, prompt_val):
+            seen.append(prompt_val.to_string())
+            return AIMessage(content="[가짜 발언]")
+
+    ledger = build_ledger([], [{"issue": "예산 산출 근거 누락", "criterion": "예산 타당성", "severity": "상",
+                                "origin": "사전 점검 (누락)", "cite": "", "quote": "", "verified": True,
+                                "verify_note": "코드 점검"}], "공공임무형")
+    audit = {"history": "", "aggressive_history": "", "conservative_history": "", "neutral_history": "", "count": 0}
+    for create in (create_aggressive_auditor, create_conservative_auditor, create_neutral_auditor):
+        create(Capture())({"issue_ledger": ledger, "project_facts": {}, "budget_coordination_plan": "{}",
+                           "audit_debate_state": audit})
+    assert len(seen) == 3
+    assert all("요청 예산: 없음 (금액·비율을 제시하지 말 것)" in s and "예산 산출 근거 누락" in s
+               and "[확인 필요: 무엇]" in s for s in seen)
+    create_neutral_auditor(Capture())({"issue_ledger": [], "project_facts": {"requested_budget_eok": 40},
+                                       "audit_debate_state": audit})
+    assert "확인된 요청 예산: 40억 원" in seen[-1] and "쟁점 원장 없음" in seen[-1]
+
+
+def test_issue_ledger_verifies_citations_orders_debate_and_judges_defense(tmp_path):
+    """쟁점 원장: 출처를 원문과 대조하고, 반드시 올릴 쟁점부터 상정하고, 발표자 답변의 출처·인용·수치로 방어를 판정하고,
+    방어 실패한 3대 기준 '상' 쟁점이 남으면 '승인'을 거부한다."""
+    import pytest
+
+    from rdagents.agents.researchers.project_defender import judge_defense
+    from rdagents.agents.schemas import DefenseAnswer
+    from rdagents.dataflows.issue_ledger import (
+        build_ledger, check_decision_against_ledger, next_issue, render_ledger, verify_citation,
+    )
+    from rdagents.dataflows.project_loader import set_current_report
+
+    report = tmp_path / "원문.md"
+    report.write_text("총사업비 120억 원\n최근 5년 풍수해 사망 6명\n수요기관: 시·도 재난안전대책본부\n", encoding="utf-8")
+    set_current_report(str(report), project_id="ledger")
+    assert verify_citation("[출처: 원문.md L2-L2]", "풍수해 사망 6명") == (True, "원문 대조 일치")
+    assert verify_citation("[출처: 원문.md L2-L2]", "피해액 1,200억 원")[1] == "인용 구절이 그 줄에 없음"
+    assert verify_citation("[출처: 원문.md L9-L9]", "")[0] is False                   # 없는 줄
+    assert verify_citation("", "", require_quote=True)[0] is False
+
+    # 등록기에는 긴 출처 대신 번호(R1…)를 보여 주고, 등록기가 적은 번호를 코드가 출처로 되돌린다
+    from rdagents.dataflows.issue_ledger import cited_claims, resolve_refs
+    claims = cited_claims("## 요약\n- 사망 통계 근거가 약함 [출처: 원문.md L2-L2]\n출처 없는 의견\n", start=4)
+    assert claims == [{"ref": "R4", "claim": "사망 통계 근거가 약함", "cite": "[출처: 원문.md L2-L2]"}]
+    assert [r["cite"] for r in resolve_refs([{"cite": "R4"}, {"cite": "R9"}, {"cite": ""}], claims)] == [
+        "[출처: 원문.md L2-L2]", "R9", ""]
+
+    registered = [
+        {"issue": "중요성 근거 약함", "criterion": "기술개발의 중요성", "severity": "하", "source_report": "기술 가치 분석",
+         "cite": "", "quote": ""},
+        {"issue": "시급성 수치 근거", "criterion": "시급성", "severity": "상", "source_report": "정책 부합성 분석",
+         "cite": "[출처: 원문.md L2-L2]", "quote": "사망 6명"},
+        {"issue": "지어낸 출처", "criterion": "정부지원 필요성", "severity": "상", "source_report": "규제/윤리 검토",
+         "cite": "[출처: 원문.md L3-L3]", "quote": "민간 투자 0원"},
+    ]
+    code = [{"issue": "예산 산출 근거 누락", "criterion": "예산 타당성", "severity": "상", "origin": "사전 점검 (누락)",
+             "cite": "", "quote": "", "verified": True, "verify_note": "코드 점검"}]
+    ledger = build_ledger(registered, code, "공공임무형")
+    assert [i["verified"] for i in ledger] == [True, False, True, False]   # 코드 쟁점, 출처 없음, 검증, 지어낸 인용
+    assert ledger[3]["member"] == "법·제도위원" and ledger[0]["member"] == "재정위원"
+    order = []
+    for _ in range(4):
+        item = next_issue(ledger, max_issues=2)
+        if item is None:
+            break
+        order.append(item["id"])
+        item["status"] = "방어 실패"
+    assert order == [1, 3]           # 반드시 올릴 쟁점 2개(예산 누락, 검증된 시급성 '상')로 상한 2를 채움
+
+    # 방어 판정: 근거 없음 인정 / 인용 불일치 / 원문에 없는 수치 -> 실패, 원문과 맞으면 성공
+    ok = DefenseAnswer(supported=True, answer="최근 5년 사망 6명입니다.", cite="[출처: 원문.md L2-L2]", quote="사망 6명")
+    assert judge_defense(ok)[0] == "방어 성공"
+    assert judge_defense(DefenseAnswer(supported=False, answer="제출자료로 확인하지 못했습니다."))[0] == "방어 실패"
+    assert "인용 구절" in judge_defense(ok.model_copy(update={"quote": "사망 60명"}))[1]
+    fabricated = ok.model_copy(update={"answer": "사망 6명, 연간 피해 1,200억 원입니다."})
+    assert judge_defense(fabricated) == ("방어 실패", "원문에 없는 수치로 방어: 1200억")
+
+    with pytest.raises(ValueError, match="#3 시급성"):
+        check_decision_against_ledger("승인", ledger)
+    check_decision_against_ledger("조건부승인", ledger)            # 조건부승인 이하는 통과
+    table = render_ledger(ledger)
+    assert "방어 실패 2 · 공방 미상정 2" in table and "인용 구절이 그 줄에 없음" in table
+    # 원장의 쟁점 개수를 옮겨 적은 수치는 표시하지 않지만, 원장에 없는 개수는 표시한다
+    from rdagents.dataflows.output_validation import mark_texts
+    marked = mark_texts({"d": "방어 실패 2건, 미상정 쟁점 2개\n방어 실패 7건"}, ledger_md=table)["d"]
+    assert marked.splitlines()[0] == "방어 실패 2건, 미상정 쟁점 2개" and "⚠️[원문에 없는 수치: 7건]" in marked
 
 
 def test_structured_retry_recovers_after_validation_error():
@@ -1280,6 +1464,47 @@ def test_checkpoint_resume():
 
 
 
+def test_human_review_interrupts_before_debate_and_resumes(tmp_path):
+    """--human-review: 쟁점 등록 뒤 정책 판단이 필요한 '상' 쟁점에서 멈추고, 사람의 판단(상정·제외)으로 이어 간다.
+    판단 함수가 없으면 멈춘 채 돌아오고, 같은 실행 번호로 다시 부르면 체크포인트에서 이어 간다."""
+    from rdagents.graph.review_graph import HUMAN_REVIEW_PENDING
+
+    fake = FakeLLM()
+    review_graph_module.create_llm_client = lambda **kwargs: _StubClient(fake)
+    config = {"results_dir": str(tmp_path / "logs"), "memory_log_path": str(tmp_path / "memory.md"),
+              "human_review": True, "checkpoint_enabled": True, "checkpoint_path": str(tmp_path / "cp.sqlite")}
+
+    # 1) 판단 함수 없이: 공방 전에 멈춤
+    graph = RDReviewGraph(config=config)
+    state, decision = graph.propagate(project_id="quantum_computing", execution_id="human-test")
+    graph.close()
+    assert decision == HUMAN_REVIEW_PENDING
+    assert state["issue_ledger"] and not state["review_debate_state"]["history"]   # 공방 전
+
+    # 2) 같은 실행 번호로 이어 감: 첫 쟁점은 제외, 나머지는 상정
+    seen = {}
+
+    def reviewer(payload):
+        seen.update(payload)
+        ids = [item["id"] for item in payload["issues"]]
+        return {str(ids[0]): {"decision": "제외", "note": "부처 협의 사항"}, **{str(i): "상정" for i in ids[1:]}}
+
+    graph = RDReviewGraph(config=config)
+    state, decision = graph.propagate(project_id="quantum_computing", execution_id="human-test",
+                                      human_reviewer=reviewer)
+    graph.close()
+    assert decision != HUMAN_REVIEW_PENDING and json.loads(decision)["verdict"]
+    asked = seen["issues"]
+    assert asked and all(item["severity"] == "상" for item in asked) and "상정" in seen["guide"]
+    ledger = {item["id"]: item for item in state["issue_ledger"]}
+    assert ledger[asked[0]["id"]]["status"] == "사람 판단 제외"
+    assert all(ledger[item["id"]]["status"] == "방어 실패" for item in asked[1:])   # 상정 -> 공방에 오름
+    assert f"(쟁점 #{asked[0]['id']}," not in state["review_debate_state"]["history"]
+    assert len(asked) >= 2
+    table = (Path(state["saved_results_dir"]) / "02b_쟁점원장.md").read_text(encoding="utf-8")
+    assert "사람 판단 제외 1" in table and "(사람 판단: 제외 — 부처 협의 사항)" in table
+
+
 def test_token_estimate_counts_calls_without_api():
     """추정기는 API 없이 그래프를 끝까지 돌려 노드별 호출을 세고, 도구 상한·체크포인트 진행을 반영한다."""
     import tempfile
@@ -1330,48 +1555,3 @@ if __name__ == "__main__":
     run_checkpoint_resume()
     run_question_verification()
     run_hearing_rehearsal()
-
-
-def test_defender_gets_length_limit_only_in_short_context_mode():
-    """짧은 문맥 모드(prompt_char_budget>0)에서만 발표자에게 길이 제한(표 금지)을 준다: 출력 상한에서 답이 잘렸다."""
-    from langchain_core.messages import AIMessage
-
-    from rdagents.agents.researchers.project_defender import create_project_defender
-    from rdagents.agents.utils.agent_utils import DEFENDER_SHORT_OUTPUT_NOTE
-
-    seen = []
-
-    class FakeLLM:
-        def invoke(self, prompt_val):
-            seen.append(prompt_val.to_string())
-            return AIMessage(content="1. 답변")
-
-    node = create_project_defender(FakeLLM())
-    debate = {"history": "", "examiner_history": "[심사위원 패널]: 근거는?", "defender_history": "", "count": 0}
-    for budget in (0, 6000):
-        node({"review_debate_state": dict(debate), "prompt_char_budget": budget})
-    assert DEFENDER_SHORT_OUTPUT_NOTE.strip() not in seen[0]
-    assert DEFENDER_SHORT_OUTPUT_NOTE.strip() in seen[1]
-
-
-def test_defender_answer_marks_skipped_questions():
-    """패널 질의 ①…⑤ 중 답하지 않은 번호를 찾아 기록에 남긴다. 하위 목록 번호는 답으로 세지 않는다."""
-    from langchain_core.messages import AIMessage
-
-    from rdagents.agents.researchers.project_defender import create_project_defender, unanswered_questions
-
-    question = "① 필요성은? ② 기술 수준은? ③ 단가 근거는? ④ 시급성은? ⑤ 중복은?"
-    headings = "**1. 필요성**\n답.\n**2. 기술**\n1. 단계\n3. 단계\n4. 단계\n**5. 중복**\n답."
-    assert unanswered_questions(question, headings) == ["③", "④"]
-    assert unanswered_questions(question, "① 답 ② 답 ③ 답 ④ 답 ⑤ 답") == []
-    assert unanswered_questions(question, "1. 답\n2. 답\n3. 답") == ["④", "⑤"]
-    assert unanswered_questions("근거를 대 보세요.", "답") == []
-
-    class FakeLLM:
-        def invoke(self, prompt_val):
-            return AIMessage(content=headings)
-
-    debate = {"history": "", "examiner_history": "[심사위원 패널]: 지난 질의 ⑥\n[심사위원 패널]: " + question,
-              "defender_history": "", "count": 0}
-    out = create_project_defender(FakeLLM())({"review_debate_state": debate})
-    assert out["review_debate_state"]["defender_history"].rstrip().endswith("[답변 누락: 질의 ③, ④에 답하지 않음]")

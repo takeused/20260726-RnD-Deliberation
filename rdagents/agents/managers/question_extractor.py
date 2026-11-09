@@ -12,20 +12,13 @@ from rdagents.agents.schemas import (
     ReviewPreparationReport,
     render_anticipated_questions,
     render_improvements,
+    require_type_questions,
 )
 from rdagents.agents.utils.agent_utils import _setting, clip_text, get_language_instruction, make_ai_message
 from rdagents.agents.utils.review_criteria import get_review_criteria
 from rdagents.agents.utils.structured import invoke_structured_model
 from rdagents.dataflows.output_validation import has_unsupported_claims
-
-_REPORT_SECTIONS = [
-    ("tech_value_report", "기술 가치 분석"),
-    ("tech_trend_report", "기술 트렌드/중복성 분석"),
-    ("economic_report", "경제/재무 타당성 분석"),
-    ("policy_report", "정책 부합성 분석"),
-    ("feasibility_report", "수행체계 분석"),
-    ("regulatory_report", "규제/윤리 검토"),
-]
+from rdagents.dataflows.issue_ledger import ledger_summary
 
 
 # 짧은 문맥 모드(prompt_char_budget > 0)에서는 출력도 줄인다. Groq 무료 등급 NDMI 실행에서 이 노드 출력이
@@ -60,9 +53,12 @@ def create_question_extractor(llm):
             "질의와 권고 모두 심각도 높은 순으로 정렬하고, 특히 최우선 심의기준 세 가지"
             "(정부지원 필요성, 기술개발의 중요성, 시급성)를 겨냥한 항목과, 예산 규모·비목 산출 근거를 묻는 "
             "'예산 타당성' 질의를 반드시 1건 이상 포함하세요.\n"
-            "권장 답변은 제출자료에서 확인한 사실만 단정하고, 확인하지 못한 항목은 가상의 기업·금액·MOU·해외사례를 만들지 말고 "
+            + ("공공임무형 사업이므로 수요기관 참여·실증 이후 제도화 경로·사업 종료 후 운영 재원을 묻는 "
+               "'현장 적용·확산' 질의도 반드시 1건 이상 포함하세요.\n"
+               if state.get("project_type") == "공공임무형" else "")
+            + "권장 답변은 제출자료에서 확인한 사실만 단정하고, 확인하지 못한 항목은 가상의 기업·금액·MOU·해외사례를 만들지 말고 "
             "'제출자료로 확인하지 못했습니다. [확인 필요: 자료명]'로 답하세요.\n"
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + ("\n" + state["gate_profile"] if state.get("gate_profile") else "")
             + get_language_instruction()
             + _SHORT_OUTPUT_NOTE * bool(_setting(state, "prompt_char_budget", "RDAGENTS_PROMPT_CHAR_BUDGET"))
@@ -72,36 +68,28 @@ def create_question_extractor(llm):
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_message),
             ("human", "## 기출·전형 질의 참고 (실제 심의 질의는 이런 패턴으로 나온다)\n\n{question_bank}\n\n"
-                      "## 기획보고서 사전 점검 (규칙 기반)\n\n{precheck}\n\n"
-                      "## 전문가 분석 보고서\n\n{reports}\n\n"
-                      "## 심사위원 패널-발표자 공방\n\n{debate_history}\n\n"
+                      "## 쟁점 원장 (사전 점검·숫자 검산·분석가 9명의 쟁점과 공방 결과, 코드 판정)\n\n{ledger}\n\n"
                       "## 전문위원회 위원장 의견\n\n{review_plan}\n\n"
                       "## 재정 검토 토론\n\n{audit_history}\n\n"
                       "## 최종 심의 결정\n\n{final_decision}\n\n"
                       "위 심의 이력을 바탕으로 예상 질의 목록과 기획보고서 보완 권고를 도출해 주세요."),
         ])
 
-        reports = []
-        for key, name in _REPORT_SECTIONS:
-            if state.get(key):
-                reports.append(f"--- {name} ---\n{state[key]}")
-
-        def _clip_half(text, state):
-            return clip_text(text, state, fraction=0.5)
-
+        # 사전 점검 요약·분석 보고서·공방 기록을 각각 잘라 읽는 대신 쟁점 원장 하나를 읽는다 (세 가지가 모두 들어 있고,
+        # 방어에 실패한 쟁점이 앞에 온다. 실제 심의에서도 방어 실패·미상정 지적이 질의로 나온다)
+        ledger = state.get("issue_ledger") or []
         prompt_val = prompt.invoke({
             "question_bank": clip_text(state.get("question_bank") or "", state, fraction=0.5) or "참고 자료 없음",
-            "precheck": state.get("precheck_brief")
-                or "사전 점검 결과 없음 (구조화 샘플 모드이거나 누락·근거 약함 항목 없음)",
-            "reports": _clip_half("\n\n".join(reports), state) or "분석 보고서 없음",
-            "debate_history": clip_text(state["review_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
+            "ledger": ledger_summary(ledger, width=60) if ledger else (state.get("precheck_brief") or "쟁점 원장 없음"),
             "review_plan": clip_text(state.get("review_plan") or "", state, fraction=0.5) or "의견 없음",
             "audit_history": clip_text(state["audit_debate_state"]["history"], state, fraction=0.5) or "토론 내역 없음",
             "final_decision": clip_text(state.get("final_review_decision") or "", state, fraction=0.5) or "결정 없음",
         })
 
+        project_type = state.get("project_type")
         call = invoke_structured_model(
-            llm, ReviewPreparationReport, prompt_val, "Question Extractor"
+            llm, ReviewPreparationReport, prompt_val, "Question Extractor",
+            post_validate=lambda report: require_type_questions(report, project_type),
         )
         report = call.model
 

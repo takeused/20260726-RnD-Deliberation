@@ -27,7 +27,7 @@ def create_economic_analyst(llm):
             "가용한 수치와 지표를 활용하되 확인되지 않은 편익을 임의로 화폐화하지 말고, Markdown 표로 핵심 결과를 정리하세요.\n"
             "백만원·조원 금액을 억원으로 직접 바꾸지 마세요(1억원 = 100백만원). get_budget_details의 '코드 단위 환산' 값을 쓰고, "
             "그 값과 총 요청 예산이 같으면 불일치로 보지 마세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

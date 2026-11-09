@@ -10,6 +10,8 @@ from langgraph.prebuilt import ToolNode
 from rdagents.agents import (
     create_aggressive_auditor,
     create_budget_coordinator,
+    create_issue_registrar,
+    create_domain_expert_panel,
     create_panel_examiner,
     create_conservative_auditor,
     create_economic_analyst,
@@ -27,6 +29,8 @@ from rdagents.agents import (
     create_tech_value_analyst,
 )
 from rdagents.agents.utils.agent_states import ReviewAgentState
+from rdagents.agents.researchers.human_issue_review import create_human_issue_review
+from rdagents.dataflows.issue_ledger import render_ledger
 from rdagents.dataflows.output_validation import mark_texts
 from rdagents.dataflows.project_loader import (
     get_budget_details,
@@ -57,7 +61,7 @@ def _clear_messages(state: ReviewAgentState):
     return {"messages": removals + [HumanMessage(content="계속 진행하세요.")]}
 
 
-_REPORT_KEYS = ("tech_value_report", "tech_trend_report", "economic_report",
+_REPORT_KEYS = ("domain_expert_report", "tech_value_report", "tech_trend_report", "economic_report",
                 "policy_report", "feasibility_report", "regulatory_report")
 # 구조화 출력 JSON: 문자열 값에만 표시를 붙인다 (예상 질의 추출기가 최종 결정 JSON을 그대로 읽음)
 _JSON_KEYS = ("review_plan", "budget_coordination_plan", "final_review_decision")
@@ -70,7 +74,7 @@ _DEBATE_TEXT_KEYS = {
 }
 
 
-def _mark_json(raw: str, precheck_md: str) -> str:
+def _mark_json(raw: str, precheck_md: str, ledger_md: str = "") -> str:
     """JSON 문자열의 글 값에 표시를 붙인다. JSON이 아니면 그대로."""
     try:
         data = json.loads(raw)
@@ -81,7 +85,7 @@ def _mark_json(raw: str, precheck_md: str) -> str:
     texts = {key: value for key, value in data.items() if isinstance(value, str) and value}
     if not texts:
         return raw
-    marked = mark_texts(texts, precheck_md)
+    marked = mark_texts(texts, precheck_md, ledger_md)
     if marked == texts:
         return raw
     return json.dumps({**data, **marked}, ensure_ascii=False)
@@ -90,7 +94,9 @@ def _mark_json(raw: str, precheck_md: str) -> str:
 def _mark_numbers(result: dict, state) -> dict:
     """노드가 쓴 글에 원문에 없는 수치 표시를 바로 붙인다 (뒤 노드가 지어낸 수치를 사실로 읽고 이어 쓰지 않게)."""
     precheck_md = state.get("precheck_md", "")
-    result = {**result, **{key: _mark_json(result[key], precheck_md)
+    ledger = result.get("issue_ledger") or state.get("issue_ledger")
+    ledger_md = render_ledger(ledger) if ledger else ""  # 원장의 쟁점 개수는 코드가 센 값이라 표시하지 않음
+    result = {**result, **{key: _mark_json(result[key], precheck_md, ledger_md)
                            for key in _JSON_KEYS if isinstance(result.get(key), str)}}
     texts = {key: result[key] for key in _REPORT_KEYS if isinstance(result.get(key), str) and result[key]}
     for state_key, fields in _DEBATE_TEXT_KEYS.items():
@@ -99,7 +105,7 @@ def _mark_numbers(result: dict, state) -> dict:
             texts |= {f"{state_key}.{f}": debate[f] for f in fields if isinstance(debate.get(f), str) and debate[f]}
     if not texts:
         return result
-    marked = mark_texts(texts, precheck_md)
+    marked = mark_texts(texts, precheck_md, ledger_md)
     out = {**result, **{key: marked[key] for key in _REPORT_KEYS if key in marked}}
     for state_key in _DEBATE_TEXT_KEYS:
         if isinstance(result.get(state_key), dict):
@@ -146,6 +152,7 @@ def setup_graph(
     analyst_plan: AnalystExecutionPlan,
     deep_model_name: str = "deep-model",
     quick_model_name: str = "quick-model",
+    human_review: bool = False,
 ) -> StateGraph:
     """R&D 심의 파이프라인 그래프 구성."""
     graph = StateGraph(ReviewAgentState)
@@ -155,6 +162,7 @@ def setup_graph(
 
     # 분석가 (Analyst) 노드 팩토리 맵
     analyst_factories = {
+        "domain_experts": create_domain_expert_panel(deep_llm),
         "tech_value": create_tech_value_analyst(deep_llm),
         "tech_trend": create_tech_trend_analyst(deep_llm),
         "economic": create_economic_analyst(deep_llm),
@@ -165,6 +173,7 @@ def setup_graph(
 
     # 분석가 ToolNode 맵
     tools_map = {
+        "domain_experts": [get_project_overview, get_tech_details, search_report],
         "tech_value": [get_project_overview, get_tech_details, search_report],
         "tech_trend": [get_similar_projects, get_tech_details, search_report],
         "economic": [get_budget_details, get_project_overview, search_report],
@@ -181,6 +190,7 @@ def setup_graph(
 
     # 심사 공방 노드 등록 (quick_llm 및 deep_llm 조합)
     # 공방은 quick_llm, 종합 및 결정은 deep_llm 사용
+    graph.add_node("Issue Registrar", _timed_node("Issue Registrar", create_issue_registrar(quick_llm), quick_model_name))
     graph.add_node("Panel Examiner", _timed_node("Panel Examiner", create_panel_examiner(quick_llm), quick_model_name))
     graph.add_node("Project Defender", _timed_node("Project Defender", create_project_defender(quick_llm), quick_model_name))
     graph.add_node("Review Manager", _timed_node("Review Manager", create_review_manager(deep_llm), deep_model_name))
@@ -206,7 +216,7 @@ def setup_graph(
     # 분석가 체이닝 (순차 실행)
     for i, spec in enumerate(analyst_plan.specs):
         is_last = (i == len(analyst_plan.specs) - 1)
-        next_node = "Panel Examiner" if is_last else analyst_plan.specs[i + 1].agent_node
+        next_node = "Issue Registrar" if is_last else analyst_plan.specs[i + 1].agent_node
         
         # 조건부 로직 메서드 매핑
         cond_func = getattr(logic, f"should_continue_{spec.key}")
@@ -225,7 +235,14 @@ def setup_graph(
         graph.add_edge(spec.clear_node, next_node)
 
 
-    # 심사 공방 루프 (패널 질의 -> 발표자 방어)
+    # 쟁점 등록 -> 쟁점별 심사 공방 루프 (패널 질의 -> 발표자 방어, 쟁점이 끝나면 위원장)
+    # --human-review: 쟁점 등록 뒤 정책 판단이 필요한 쟁점을 사람에게 묻고(interrupt) 공방으로 간다
+    if human_review:
+        graph.add_node("Human Issue Review", _timed_node("Human Issue Review", create_human_issue_review()))
+        graph.add_edge("Issue Registrar", "Human Issue Review")
+        graph.add_edge("Human Issue Review", "Panel Examiner")
+    else:
+        graph.add_edge("Issue Registrar", "Panel Examiner")
     graph.add_conditional_edges(
         "Panel Examiner",
         logic.should_continue_review_debate,
