@@ -1,0 +1,20 @@
+# Workers 정적 배포에서 빼는 파일: 웹 페이지(index.html, results/**/*.html)만 공개한다.
+# 빌드는 저장소 복제본에서 돌므로 .gitignore로 추적하지 않는 파일(결과·비공개 자료·venv)은 애초에 없다.
+.git
+.env*
+.venv
+venv
+__pycache__
+rdagents
+tests
+tools
+sample_data
+question_bank_seed
+*.py
+*.md
+*.toml
+*.lock
+*.json
+*.jsonc
+.gitignore
+.assetsignore
