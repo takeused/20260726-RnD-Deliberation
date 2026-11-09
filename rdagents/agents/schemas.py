@@ -209,7 +209,9 @@ class FinalDecision(BaseModel):
             if budget not in (None, 0):
                 raise ValueError("보류/반려의 승인 예산은 None 또는 0이어야 합니다.")
         elif budget is None or budget <= 0:
-            raise ValueError("승인/조건부승인/감액조정에는 0보다 큰 승인 예산이 필요합니다.")
+            # 재시도 피드백으로 그대로 전달된다: 예산 근거가 없을 때 금액을 지어내지 않게 보류를 안내 (NDMI groq6의 120.0억원)
+            raise ValueError("승인/조건부승인/감액조정에는 0보다 큰 승인 예산이 필요합니다. "
+                             "입력에 근거가 되는 예산액이 없으면 금액을 만들지 말고 판정을 '보류'로 하세요.")
 
         if self.verdict == ReviewVerdict.CONDITIONAL_APPROVE and not (
             self.conditions and self.conditions.strip()
@@ -219,13 +221,20 @@ class FinalDecision(BaseModel):
 
 
 def align_final_decision_to_budget(
-    decision: FinalDecision, approved_budget_eok: float | None
+    decision: FinalDecision, approved_budget_eok: float | None, budget_known: bool = True
 ) -> FinalDecision:
-    """최종 결정의 승인 예산이 직전 검증 예산안과 일치하는지 확인한다."""
+    """최종 결정의 승인 예산이 직전 검증 예산안과 일치하는지 확인한다.
+
+    budget_known=False: 원문에서 검증한 예산도, 금액이 있는 예산 조정안도 없다. 이때 승인류 결정은 승인 예산을
+    지어낼 수밖에 없다 (NDMI groq6: 예산액이 없는 보고서에 '조건부승인 120.0억원'이 나와 예상 질의까지 번졌음).
+    """
     if decision.verdict in {ReviewVerdict.DEFER, ReviewVerdict.REJECT}:
         if decision.approved_budget_billion not in (None, 0):
             raise ValueError("보류/반려 결정은 승인 예산을 포함할 수 없습니다.")
         return decision
+    if approved_budget_eok is None and not budget_known:
+        raise ValueError("원문에서 확인한 예산과 금액이 있는 예산 조정안이 모두 없어 승인 예산의 근거가 없습니다. "
+                         "원문에 없는 예산액을 만들지 말고 판정을 '보류'로 하세요.")
     if approved_budget_eok is None:
         return decision
     if decision.approved_budget_billion is None:

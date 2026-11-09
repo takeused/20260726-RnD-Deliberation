@@ -67,7 +67,8 @@ def create_final_approver(llm):
             "audit_history": clip_text(audit_history, state),
             "past_context": clip_text(state.get("past_context") or "", state) or "이전 심의 이력 없음 (신규 심의).",
         })
-        approved_budget = state.get("project_facts", {}).get("requested_budget_eok")
+        verified_budget = state.get("project_facts", {}).get("requested_budget_eok")
+        approved_budget = verified_budget
         try:
             proposal = BudgetProposal(**json.loads(budget_plan))
             approved_budget = proposal.proposed_budget_billion
@@ -79,7 +80,8 @@ def create_final_approver(llm):
             prompt_val,
             "Final Approver",
             post_validate=lambda decision: align_final_decision_to_budget(
-                decision, approved_budget
+                decision, approved_budget,
+                budget_known=approved_budget is not None or verified_budget is not None,
             ),
         )
         decision = call.model
