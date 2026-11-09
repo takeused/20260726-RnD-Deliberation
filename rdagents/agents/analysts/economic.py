@@ -25,7 +25,7 @@ def create_economic_analyst(llm):
             "공공재형 사업은 낮은 민간투자를 감점 사유로 삼지 마세요.\n"
             "6. **재원 조달 및 재정 부담**: 중장기 재정 부담은 감당 가능한 수준인가?\n\n"
             "가용한 수치와 지표를 활용하되 확인되지 않은 편익을 임의로 화폐화하지 말고, Markdown 표로 핵심 결과를 정리하세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

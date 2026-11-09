@@ -74,6 +74,7 @@ class ReviewAgentState(MessagesState):
     question_bank: Annotated[str, "기출·전형 질의 참고 코퍼스"]
     precheck_md: Annotated[str, "기획보고서 사전 점검표 (규칙 기반)"]
     precheck_brief: Annotated[str, "사전 점검의 누락·근거 약함 요약 (에이전트 지시문용)"]
+    project_type: Annotated[str, "사업 유형 (산업형·공공임무형·혼합형). 심의기준·평가 가중치·점검 항목을 정함"]
     prompt_char_budget: Annotated[int, "노드 입력 절단 예산 (문자 수, 0=무제한)"]
     tool_result_char_budget: Annotated[int, "분석가가 LLM에 보내는 도구 결과 총량 예산 (문자 수, 0=무제한)"]
     max_analyst_tool_calls: Annotated[int, "분석가 1명의 도구 호출 상한 (0=무제한)"]

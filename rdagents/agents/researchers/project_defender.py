@@ -30,7 +30,7 @@ def create_project_defender(llm):
             "인정하세요. 인정과 보완 계획이 무리한 방어보다 신뢰를 얻습니다.\n"
             "4. 최우선 심의기준(정부지원 필요성, 중요성, 시급성)에 대한 공격에는 "
             "가장 공들여 답변하세요.\n"
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
         )
 

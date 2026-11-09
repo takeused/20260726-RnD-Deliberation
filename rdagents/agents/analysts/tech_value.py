@@ -24,7 +24,7 @@ def create_tech_value_analyst(llm):
             "5. **핵심 기술 확보 가능성**: 사업 기간 내 목표 기술 확보가 현실적으로 가능한가?\n\n"
             "반드시 구체적인 근거와 데이터를 기반으로 분석하고, 보고서 말미에 핵심 분석 결과를 정리한 "
             "Markdown 표를 첨부하세요."
-            + get_review_criteria()
+            + get_review_criteria(state.get("project_type"))
             + get_language_instruction()
             + analyst_length_note(state)
         )

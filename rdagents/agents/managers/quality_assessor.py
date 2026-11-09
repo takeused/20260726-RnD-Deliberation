@@ -4,6 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from rdagents.agents.schemas import (
     DecisionQualityReport,
+    apply_quality_weights,
     quality_weights_text,
     render_quality_scorecard,
     render_uncertainty_report,
@@ -20,11 +21,12 @@ _REPORT_KEYS = (
 
 def create_quality_assessor(llm):
     def quality_assessor_node(state):
+        project_type = state.get("project_type") or "혼합형"
         system = (
             "당신은 최종 승인 결정과 독립적으로 심의 품질을 감사하는 평가자입니다. "
-            f"{quality_weights_text()} 기준으로 0~100점을 부여하세요. "
-            "사업이 산업·시장 창출형인지 공공임무·사회문제 해결형인지 먼저 판별하고, "
-            "재난안전 사업의 경제·공공가치는 민간투자·수출보다 피해회피, 인명피해 저감, 대응시간, "
+            f"사업 유형은 '{project_type}'입니다 (심의 전 코드가 판별). 이 유형의 평가 항목과 가중치 "
+            f"{quality_weights_text(project_type)} 기준으로 0~100점을 부여하세요. 목록에 없는 항목은 비워 두세요. "
+            "공공임무형(재난안전 등)의 공공가치는 민간투자·수출보다 피해회피, 인명피해 저감, 대응시간, "
             "취약계층·지역 안전격차, 공공서비스 지속성과 사회 회복력 근거로 평가하세요. "
             "각 점수와 별도로 근거 충분성 신뢰도를 평가하고, 반드시 에이전트 간 불일치, 결론에 반하는 근거, "
             "추가 확인 자료를 찾아야 합니다. 사업보고서 주장과 독립 외부 근거를 구분하고, 외부 근거가 없으면 "
@@ -55,7 +57,8 @@ def create_quality_assessor(llm):
                 missing_evidence=[f"구조화 품질평가 실패. 자유 형식 결과: {free_text}"],
                 external_evidence_assessment="구조화 평가 실패로 외부 근거 판정 불가",
             )
-        scorecard = render_quality_scorecard(report)
+        report = apply_quality_weights(report, project_type)
+        scorecard = render_quality_scorecard(report, project_type)
         uncertainty = render_uncertainty_report(report)
         return {
             "messages": [make_ai_message(scorecard, "QualityAssessor", call.usage)],

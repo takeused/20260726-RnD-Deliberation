@@ -140,7 +140,7 @@ def sample_instance(schema):
                                        basis="[가짜 근거]", suggested_answer="[가짜 답변]")
 
         values["questions"] = [q(CriterionTag.GOV_SUPPORT), q(CriterionTag.IMPORTANCE),
-                               q(CriterionTag.URGENCY), q(CriterionTag.BUDGET), q(CriterionTag.OTHER)]
+                               q(CriterionTag.URGENCY), q(CriterionTag.BUDGET), q(CriterionTag.FIELD)]
         values["improvements"] = [ImprovementItem(weakness="[가짜 취약점]", severity=Severity.MEDIUM,
                                                   recommendation="[가짜 권고]") for _ in range(3)]
     return schema(**values)
